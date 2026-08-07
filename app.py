@@ -195,7 +195,7 @@ if not st.session_state.authenticated:
 st.title("📊 Monitor de Digitação (Multi-Planilhas)")
 
 # Inicializa links no Session State para permitir inclusão/remoção dinâmica
-if "sheets_config" not in st.session_state:
+if "sheets_config" not in st.session_state or not isinstance(st.session_state.sheets_config, dict):
     st.session_state.sheets_config = DEFAULT_SHEETS.copy()
 
 # --- CONFIGURAÇÃO E SINCRONIZAÇÃO DE VÁRIAS PLANILHAS ---
