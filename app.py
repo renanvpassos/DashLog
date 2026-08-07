@@ -5,6 +5,8 @@ from datetime import datetime, date
 import pandas as pd
 import streamlit as st
 from fpdf import FPDF
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
 
 # ==========================================
 # CONFIGURAÇÕES INICIAIS
@@ -16,32 +18,79 @@ st.set_page_config(
 )
 
 # ==========================================
+# INTEGRAÇÃO COM GOOGLE DRIVE API
+# ==========================================
+def get_google_drive_service():
+    """Autentica na API do Google usando secrets do Streamlit ou arquivo de chave local."""
+    SCOPES = ['https://www.googleapis.com/auth/drive.metadata.readonly']
+    
+    # Prioridade 1: Streamlit Secrets
+    if "gcp_service_account" in st.secrets:
+        creds_dict = dict(st.secrets["gcp_service_account"])
+        creds = service_account.Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
+        return build('drive', 'v3', credentials=creds)
+    
+    # Prioridade 2: Arquivo local credentials.json
+    elif os.path.exists("credentials.json"):
+        creds = service_account.Credentials.from_service_account_file("credentials.json", scopes=SCOPES)
+        return build('drive', 'v3', credentials=creds)
+    
+    return None
+
+def extract_spreadsheet_id(url: str) -> str:
+    """Extrai o ID do Google Sheets a partir da URL."""
+    match = re.search(r"/d/([a-zA-Z0-9-_]+)", url)
+    return match.group(1) if match else None
+
+def get_last_editor_from_google(sheet_url: str) -> str:
+    """Consulta a API do Google Drive para retornar o nome/email da última pessoa que editou."""
+    file_id = extract_spreadsheet_id(sheet_url)
+    if not file_id:
+        return "Conta Google Desconhecida"
+
+    try:
+        service = get_google_drive_service()
+        if not service:
+            return "Sem Credenciais Google"
+
+        revisions = service.revisions().list(
+            fileId=file_id, 
+            fields="revisions(lastModifyingUser)"
+        ).execute()
+        
+        items = revisions.get('revisions', [])
+        if items:
+            last_user = items[-1].get('lastModifyingUser', {})
+            display_name = last_user.get('displayName')
+            email = last_user.get('emailAddress')
+            
+            if display_name and email:
+                return f"{display_name} ({email})"
+            return display_name or email or "Usuário Google Anônimo"
+    except Exception as e:
+        st.caption(f"Aviso API Google Drive: {e}")
+    
+    return "Conta Google Não Identificada"
+
+# ==========================================
 # CONVERSOR DE LINK (Google Sheets para CSV)
 # ==========================================
 def convert_to_csv_url(url: str) -> str:
-    """
-    Converte qualquer URL padrão do Google Sheets (ex: /edit#gid=...) 
-    para o link de exportação direta em CSV.
-    """
-    sheet_id_match = re.search(r"/d/([a-zA-Z0-9-_]+)", url)
-    if not sheet_id_match:
+    sheet_id = extract_spreadsheet_id(url)
+    if not sheet_id:
         return url
 
-    sheet_id = sheet_id_match.group(1)
     gid_match = re.search(r"[#&?]gid=([0-9]+)", url)
     gid = gid_match.group(1) if gid_match else "0"
 
     return f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
 
 # ==========================================
-# SEUS LINKS DO GOOGLE SHEETS FIXOS NO CÓDIGO
-# Chave: Nome da Planilha | Valor: Link normal ou CSV do Google Sheets
+# LINKS DAS PLANILHAS
 # ==========================================
 LISTA_PLANILHAS = {
-    "Fluxograma Henkel": "https://docs.google.com/spreadsheets/d/1iZ9CcRjNk_C3uAWRTYO1xMGyLzGKKWLTHPguxq4pHOE/edit?usp=sharing",
-    "Fluxograma Renan": "https://docs.google.com/spreadsheets/d/1zRkVSttkkpqekEdXjGPlz3-Dl7NzgqnkbGioJGuAdRY/edit?usp=sharing",
-    # Adicione mais planilhas conforme necessário:
-    # "Filial 2": "https://docs.google.com/spreadsheets/d/OUTRO_ID/edit?gid=0",
+    "Planilha Henkel": "https://docs.google.com/spreadsheets/d/1iZ9CcRjNk_C3uAWRTYO1xMGyLzGKKWLTHPguxq4pHOE/edit?usp=sharing",
+    "Planilha Renan": "https://docs.google.com/spreadsheets/d/1zRkVSttkkpqekEdXjGPlz3-Dl7NzgqnkbGioJGuAdRY/edit?usp=sharing",
 }
 
 DATA_DIR = "data"
@@ -83,7 +132,7 @@ def add_log_entry(sheet_name, digitador, referencia, acao):
 # ==========================================
 # LÓGICA DE COMPARAÇÃO E CACHE LOCAL
 # ==========================================
-def process_single_sheet_update(sheet_name, uploaded_df):
+def process_single_sheet_update(sheet_name, raw_url, uploaded_df):
     req_cols = ["DIGITADOR", "REFERÊNCIA"]
     missing = [col for col in req_cols if col not in uploaded_df.columns]
     if missing:
@@ -100,8 +149,15 @@ def process_single_sheet_update(sheet_name, uploaded_df):
             prev_indexed = previous_df.set_index("REFERÊNCIA")
             curr_indexed = uploaded_df.set_index("REFERÊNCIA")
 
-            common_refs = curr_indexed.index.intersection(prev_indexed.index)
+            # Método para determinar o nome do digitador
+            def resolve_digitador(row):
+                val = str(row.get("DIGITADOR", "")).strip()
+                if not val or val in ["-", "nan", "None"]:
+                    return get_last_editor_from_google(raw_url)
+                return val
 
+            # 1. Checar alterações em registros existentes
+            common_refs = curr_indexed.index.intersection(prev_indexed.index)
             for ref in common_refs:
                 row_prev = prev_indexed.loc[ref]
                 row_curr = curr_indexed.loc[ref]
@@ -111,7 +167,7 @@ def process_single_sheet_update(sheet_name, uploaded_df):
                 if isinstance(row_curr, pd.DataFrame):
                     row_curr = row_curr.iloc[0]
 
-                digitador = row_curr.get("DIGITADOR", "Desconhecido")
+                digitador = resolve_digitador(row_curr)
 
                 for col in curr_indexed.columns:
                     val_old = row_prev.get(col, "-")
@@ -125,12 +181,14 @@ def process_single_sheet_update(sheet_name, uploaded_df):
                         
                         add_log_entry(sheet_name, digitador, ref, acao)
 
+            # 2. Checar novas adições
             new_refs = curr_indexed.index.difference(prev_indexed.index)
             for ref in new_refs:
                 row_curr = curr_indexed.loc[ref]
                 if isinstance(row_curr, pd.DataFrame):
                     row_curr = row_curr.iloc[0]
-                digitador = row_curr.get("DIGITADOR", "Desconhecido")
+                
+                digitador = resolve_digitador(row_curr)
                 add_log_entry(sheet_name, digitador, ref, "adicionou/criou este processo")
 
         except Exception as e:
@@ -188,10 +246,11 @@ if not st.session_state.authenticated:
             st.title("🔐 Acesso ao Sistema")
             st.caption("Digite a senha para prosseguir")
             
+            pass_required = st.secrets.get("system_password", "multproc")
             password_input = st.text_input("Senha de Acesso", type="password")
             
             if st.button("Entrar", use_container_width=True):
-                if password_input == "multproc":
+                if password_input == pass_required:
                     st.session_state.authenticated = True
                     st.rerun()
                 else:
@@ -207,13 +266,13 @@ col_btn, col_info = st.columns([1, 3])
 
 with col_btn:
     if st.button("🔄 Sincronizar Planilhas", use_container_width=True, type="primary"):
-        with st.spinner("Baixando dados e calculando alterações..."):
+        with st.spinner("Baixando dados e identificando revisões no Google Drive..."):
             sucessos = 0
             for name, url in LISTA_PLANILHAS.items():
                 try:
                     csv_url = convert_to_csv_url(url)
                     df_dl = pd.read_csv(csv_url, dtype=str)
-                    if process_single_sheet_update(name, df_dl):
+                    if process_single_sheet_update(name, url, df_dl):
                         sucessos += 1
                 except Exception as e:
                     st.error(f"Erro ao baixar '{name}': {e}")
@@ -312,7 +371,7 @@ for log in logs_all:
     if matches_search:
         filtered_logs.append(log)
 
-# Filtro exclusivo para o PDF
+# Filtro para o PDF
 logs_for_pdf = []
 for l in logs_all:
     try:
