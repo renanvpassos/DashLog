@@ -89,22 +89,22 @@ def convert_to_csv_url(url: str) -> str:
 # LINKS DAS PLANILHAS
 # ==========================================
 LISTA_PLANILHAS = {
-    "Planilha ROCHE": "https://docs.google.com/spreadsheets/d/1ym-kHhuaW1pD5KNXzrmgY2QaUSol339R4fCHdGRS3K8/edit?usp=sharing", #ROCHE
-    "Planilha RENAN": "https://docs.google.com/spreadsheets/d/1zRkVSttkkpqekEdXjGPlz3-Dl7NzgqnkbGioJGuAdRY/edit?usp=sharing", #RENAN
-    "Planilha VALERIA": "https://docs.google.com/spreadsheets/d/1uJzArQ8oF19s2yYQD3BFoNeaZW_xPMdD1RvdSIWnGR8/edit?usp=sharing", #VALERIA
-    "Planilha SALVADOR LENNON": "https://docs.google.com/spreadsheets/d/1Q0BMTebNMSEyGqTwuQjy2r6nLeSNQE7oIhEntpUhQAA/edit?gid=0#gid=0", #SALVADOR LENNON
-    "Planilha RIO LENNON": "https://docs.google.com/spreadsheets/d/10P8YgNIqxox-MqDA63DnO5yKAueAQ5GgJONDH2fu9-8/edit?gid=0#gid=0", #RIO LENNON
-    "Planilha ABB": "https://docs.google.com/spreadsheets/d/1gNeE9CY8KLaI7DOajWFJcGmZ-UuS4ME8firbFkovNS4/edit?usp=sharing", #ABB
-    "Planilha KERING": "https://docs.google.com/spreadsheets/d/1mH3TIpm23KkNK-JODDwfd8Igqm1ZtvIeQRUTJAHLZVI/edit?gid=0#gid=0", #KERING
-    "Planilha ZARA": "https://docs.google.com/spreadsheets/d/1CSX4tQoZsspQ0GmVHuzt5h0ABc28Bdd_DqyPR-rGNns/edit?gid=0#gid=0", #ZARA
-    "Planilha PRADA": "https://docs.google.com/spreadsheets/d/11xDf-tkye_MeVOh_Re5_Piby9_AdVNv-_TOJyqEk9rQ/edit?usp=sharing", #PRADA
-    "Planilha LOUIS VUITTON": "https://docs.google.com/spreadsheets/d/1zgYootR8Dx5arj7O3Mi31nTgUgvr8xpxhatgn5DgPok/edit?usp=sharing", #LOUIS VUITTON
-    "Planilha FASHION DIVERSOS": "https://docs.google.com/spreadsheets/d/1Xzggnm2N0YizRHUs0V--cr5OZh5ypSbAReEK_iSchT0/edit?gid=0#gid=0", #FASHION DIVERSOS
-    "Planilha RAYANE": "https://docs.google.com/spreadsheets/d/1Ch3UFNIBYKVm4BF48iB-DjCbcrzUwM0Cl_QG6NB16_4/edit?gid=0#gid=0", #FASHION RAYANE
-    "Planilha ADIENT": "https://docs.google.com/spreadsheets/d/1Ii3u9yezVPscByz2q33uTGXPCNL64JV5syXArMnPeP0/edit?gid=0#gid=0", #OSGT ADIENT
-    "Planilha HENKEL": "https://docs.google.com/spreadsheets/d/1iZ9CcRjNk_C3uAWRTYO1xMGyLzGKKWLTHPguxq4pHOE/edit?gid=1082960033#gid=1082960033",
-    "Planilha SCANIA": "https://docs.google.com/spreadsheets/d/1BJpKdZlGo13vxs_sJ-467_RJbP8BBbMpD89pxrkzCFM/edit?gid=0#gid=0",
-    "Planilha SIG COMBIBLOC": "https://docs.google.com/spreadsheets/d/1EjLNlp5-_vmRQ834JWIH0rGSqZre3MvNoiHF92RI2LQ/edit?gid=1082960033#gid=1082960033",
+    "Planilha ROCHE": "https://docs.google.com/spreadsheets/d/1ym-kHhuaW1pD5KNXzrmgY2QaUSol339R4fCHdGRS3K8", #ROCHE
+    "Planilha RENAN": "https://docs.google.com/spreadsheets/d/1zRkVSttkkpqekEdXjGPlz3-Dl7NzgqnkbGioJGuAdRY", #RENAN
+    "Planilha VALERIA": "https://docs.google.com/spreadsheets/d/1uJzArQ8oF19s2yYQD3BFoNeaZW_xPMdD1RvdSIWnGR8", #VALERIA
+    "Planilha SALVADOR LENNON": "https://docs.google.com/spreadsheets/d/1Q0BMTebNMSEyGqTwuQjy2r6nLeSNQE7oIhEntpUhQAA", #SALVADOR LENNON
+    "Planilha RIO LENNON": "https://docs.google.com/spreadsheets/d/10P8YgNIqxox-MqDA63DnO5yKAueAQ5GgJONDH2fu9-8", #RIO LENNON
+    "Planilha ABB": "https://docs.google.com/spreadsheets/d/1gNeE9CY8KLaI7DOajWFJcGmZ-UuS4ME8firbFkovNS4", #ABB
+    "Planilha KERING": "https://docs.google.com/spreadsheets/d/1mH3TIpm23KkNK-JODDwfd8Igqm1ZtvIeQRUTJAHLZVI", #KERING
+    "Planilha ZARA": "https://docs.google.com/spreadsheets/d/1CSX4tQoZsspQ0GmVHuzt5h0ABc28Bdd_DqyPR-rGNns", #ZARA
+    "Planilha PRADA": "https://docs.google.com/spreadsheets/d/11xDf-tkye_MeVOh_Re5_Piby9_AdVNv-_TOJyqEk9rQ", #PRADA
+    "Planilha LOUIS VUITTON": "https://docs.google.com/spreadsheets/d/1zgYootR8Dx5arj7O3Mi31nTgUgvr8xpxhatgn5DgPok", #LOUIS VUITTON
+    "Planilha FASHION DIVERSOS": "https://docs.google.com/spreadsheets/d/1Xzggnm2N0YizRHUs0V--cr5OZh5ypSbAReEK_iSchT0", #FASHION DIVERSOS
+    "Planilha RAYANE": "https://docs.google.com/spreadsheets/d/1Ch3UFNIBYKVm4BF48iB-DjCbcrzUwM0Cl_QG6NB16_4", #FASHION RAYANE
+    "Planilha ADIENT": "https://docs.google.com/spreadsheets/d/1Ii3u9yezVPscByz2q33uTGXPCNL64JV5syXArMnPeP0", #OSGT ADIENT
+    "Planilha HENKEL": "https://docs.google.com/spreadsheets/d/1iZ9CcRjNk_C3uAWRTYO1xMGyLzGKKWLTHPguxq4pHOE",
+    "Planilha SCANIA": "https://docs.google.com/spreadsheets/d/1BJpKdZlGo13vxs_sJ-467_RJbP8BBbMpD89pxrkzCFM",
+    "Planilha SIG COMBIBLOC": "https://docs.google.com/spreadsheets/d/1EjLNlp5-_vmRQ834JWIH0rGSqZre3MvNoiHF92RI2LQ",
 }
 
 DATA_DIR = "data"
