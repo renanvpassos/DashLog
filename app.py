@@ -189,7 +189,8 @@ with col_btn:
     if st.button("🔄 Sincronizar Planilhas", use_container_width=True, type="primary"):
         with st.spinner("Baixando dados e calculando alterações..."):
             sucessos = 0
-            for name, url in LISTA_PLANILHAS.items():
+            for idx, url in enumerate(LISTA_PLANILHAS, start=1):
+                name = f"Planilha {idx}"
                 try:
                     df_dl = pd.read_csv(url, dtype=str)
                     if process_single_sheet_update(name, df_dl):
