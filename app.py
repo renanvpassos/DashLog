@@ -1,4 +1,5 @@
 import os
+import re
 import json
 from datetime import datetime, date
 import pandas as pd
@@ -15,13 +16,32 @@ st.set_page_config(
 )
 
 # ==========================================
+# CONVERSOR DE LINK (Google Sheets para CSV)
+# ==========================================
+def convert_to_csv_url(url: str) -> str:
+    """
+    Converte qualquer URL padrão do Google Sheets (ex: /edit#gid=...) 
+    para o link de exportação direta em CSV.
+    """
+    sheet_id_match = re.search(r"/d/([a-zA-Z0-9-_]+)", url)
+    if not sheet_id_match:
+        return url
+
+    sheet_id = sheet_id_match.group(1)
+    gid_match = re.search(r"[#&?]gid=([0-9]+)", url)
+    gid = gid_match.group(1) if gid_match else "0"
+
+    return f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
+
+# ==========================================
 # SEUS LINKS DO GOOGLE SHEETS FIXOS NO CÓDIGO
-# Chave: Nome da Planilha | Valor: Link formatado para CSV
+# Chave: Nome da Planilha | Valor: Link normal ou CSV do Google Sheets
 # ==========================================
 LISTA_PLANILHAS = {
-    "Planilha Principal": "https://docs.google.com/spreadsheets/d/1iZ9CcRjNk_C3uAWRTYO1xMGyLzGKKWLTHPguxq4pHOE/export?format=csv&gid=1082960033",
-    # Para adicionar mais, basta incluir uma vírgula e a próxima linha:
-    # "Planilha 2": "https://docs.google.com/spreadsheets/d/OUTRO_ID/export?format=csv&gid=0",
+    "Fluxograma Henkel": "https://docs.google.com/spreadsheets/d/1iZ9CcRjNk_C3uAWRTYO1xMGyLzGKKWLTHPguxq4pHOE/edit?usp=sharing",
+    "Fluxograma Renan": "https://docs.google.com/spreadsheets/d/1zRkVSttkkpqekEdXjGPlz3-Dl7NzgqnkbGioJGuAdRY/edit?usp=sharing",
+    # Adicione mais planilhas conforme necessário:
+    # "Filial 2": "https://docs.google.com/spreadsheets/d/OUTRO_ID/edit?gid=0",
 }
 
 DATA_DIR = "data"
@@ -191,7 +211,8 @@ with col_btn:
             sucessos = 0
             for name, url in LISTA_PLANILHAS.items():
                 try:
-                    df_dl = pd.read_csv(url, dtype=str)
+                    csv_url = convert_to_csv_url(url)
+                    df_dl = pd.read_csv(csv_url, dtype=str)
                     if process_single_sheet_update(name, df_dl):
                         sucessos += 1
                 except Exception as e:
