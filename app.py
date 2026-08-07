@@ -239,15 +239,16 @@ with st.expander("⚙️ Gerenciar e Sincronizar Planilhas Google Sheets", expan
                     st.success(f"{sucessos} planilha(s) sincronizada(s) com sucesso!")
                     st.rerun()
 
-    # Lista de planilhas individuais com remoção
-    for name, url in list(st.session_state.sheets_config.items()):
+    # Garante que é um dicionário antes de chamar .items()
+    current_sheets = st.session_state.sheets_config if isinstance(st.session_state.sheets_config, dict) else {}
+    
+    for name, url in list(current_sheets.items()):
         c1, c2, c3 = st.columns([1.5, 3, 0.8])
         c1.text(f"📌 {name}")
-        c2.caption(url[:60] + "..." if len(url) > 60 else url)
+        c2.caption(str(url)[:60] + "..." if len(str(url)) > 60 else str(url))
         if c3.button("🗑️ Remover", key=f"del_{name}"):
             del st.session_state.sheets_config[name]
             st.rerun()
-
 st.divider()
 
 # --- CARREGAR DADOS DOS CACHES DE TODAS AS PLANILHAS ---
