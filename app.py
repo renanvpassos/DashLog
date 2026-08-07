@@ -149,14 +149,7 @@ def process_single_sheet_update(sheet_name, raw_url, uploaded_df):
             prev_indexed = previous_df.set_index("REFERÊNCIA")
             curr_indexed = uploaded_df.set_index("REFERÊNCIA")
 
-            # Método para determinar o nome do digitador
-            def resolve_digitador(row):
-                val = str(row.get("DIGITADOR", "")).strip()
-                if not val or val in ["-", "nan", "None"]:
-                    return get_last_editor_from_google(raw_url)
-                return val
-
-            # 1. Checar alterações em registros existentes
+            # Checar alterações apenas em registros que JÁ EXISTIAM
             common_refs = curr_indexed.index.intersection(prev_indexed.index)
             for ref in common_refs:
                 row_prev = prev_indexed.loc[ref]
@@ -167,29 +160,23 @@ def process_single_sheet_update(sheet_name, raw_url, uploaded_df):
                 if isinstance(row_curr, pd.DataFrame):
                     row_curr = row_curr.iloc[0]
 
-                digitador = resolve_digitador(row_curr)
+                digitador = str(row_curr.get("DIGITADOR", "")).strip()
 
-                for col in curr_indexed.columns:
-                    val_old = row_prev.get(col, "-")
-                    val_new = row_curr.get(col, "-")
+                # REGRA: Só registra se o DIGITADOR estiver devidamente preenchido
+                if digitador and digitador not in ["-", "nan", "None"]:
+                    for col in curr_indexed.columns:
+                        val_old = row_prev.get(col, "-")
+                        val_new = row_curr.get(col, "-")
 
-                    if val_old != val_new:
-                        if col.upper() in ["STATUS", "SITUAÇÃO", "SITUACAO"]:
-                            acao = f"alterou o status de '{val_old}' para '{val_new}'"
-                        else:
-                            acao = f"alterou o campo '{col}' de '{val_old}' para '{val_new}'"
-                        
-                        add_log_entry(sheet_name, digitador, ref, acao)
+                        if val_old != val_new:
+                            if col.upper() in ["STATUS", "SITUAÇÃO", "SITUACAO"]:
+                                acao = f"alterou o status de '{val_old}' para '{val_new}'"
+                            else:
+                                acao = f"alterou o campo '{col}' de '{val_old}' para '{val_new}'"
+                            
+                            add_log_entry(sheet_name, digitador, ref, acao)
 
-            # 2. Checar novas adições
-            new_refs = curr_indexed.index.difference(prev_indexed.index)
-            for ref in new_refs:
-                row_curr = curr_indexed.loc[ref]
-                if isinstance(row_curr, pd.DataFrame):
-                    row_curr = row_curr.iloc[0]
-                
-                digitador = resolve_digitador(row_curr)
-                add_log_entry(sheet_name, digitador, ref, "adicionou/criou este processo")
+            # NOTA: O bloco de `new_refs` foi removido para não gerar logs ao criar novas linhas.
 
         except Exception as e:
             st.warning(f"Erro ao comparar alterações da planilha '{sheet_name}': {e}")
