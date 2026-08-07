@@ -6,6 +6,8 @@ from datetime import datetime, date
 import pandas as pd
 import streamlit as st
 from fpdf import FPDF
+import requests
+import io
 
 # ==========================================
 # CONFIGURAÇÕES INICIAIS
@@ -58,7 +60,6 @@ LISTA_PLANILHAS = {
     "Planilha FASHION DIVERSOS": "https://docs.google.com/spreadsheets/d/1Xzggnm2N0YizRHUs0V--cr5OZh5ypSbAReEK_iSchT0", #FASHION DIVERSOS
     "Planilha RAYANE": "https://docs.google.com/spreadsheets/d/1Ch3UFNIBYKVm4BF48iB-DjCbcrzUwM0Cl_QG6NB16_4", #FASHION RAYANE
     "Planilha ADIENT": "https://docs.google.com/spreadsheets/d/1Ii3u9yezVPscByz2q33uTGXPCNL64JV5syXArMnPeP0", #OSGT ADIENT
-    "Planilha HENKEL": "https://docs.google.com/spreadsheets/d/1iZ9CcRjNk_C3uAWRTYO1xMGyLzGKKWLTHPguxq4pHOE",
     "Planilha SCANIA": "https://docs.google.com/spreadsheets/d/1BJpKdZlGo13vxs_sJ-467_RJbP8BBbMpD89pxrkzCFM",
     "Planilha SIG COMBIBLOC": "https://docs.google.com/spreadsheets/d/1EjLNlp5-_vmRQ834JWIH0rGSqZre3MvNoiHF92RI2LQ",
 }
@@ -224,7 +225,6 @@ with col_btn:
         with st.spinner("Baixando dados e calculando alterações..."):
             sucessos = 0
             
-            # Cabeçalhos HTTP para simular um navegador real e evitar erro 400 do Google
             headers = {
                 'User-Agent': (
                     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
@@ -237,21 +237,34 @@ with col_btn:
                 try:
                     csv_url = convert_to_csv_url(url)
                     
-                    # Leitura utilizando storage_options para enviar o User-Agent
-                    df_dl = pd.read_csv(csv_url, dtype=str, storage_options=headers)
+                    # 1. Faz o download do CSV via requests (trata redirecionamentos do Google corretamente)
+                    response = requests.get(csv_url, headers=headers, timeout=15)
                     
-                    if process_single_sheet_update(name, df_dl):
-                        sucessos += 1
+                    # 2. Verifica se a resposta foi bem-sucedida (HTTP 200 OK)
+                    if response.status_code == 200:
+                        # Converte a resposta em texto para um arquivo em memória que o pandas lê
+                        df_dl = pd.read_csv(io.StringIO(response.text), dtype=str)
+                        
+                        if process_single_sheet_update(name, df_dl):
+                            sucessos += 1
+                            
+                    elif response.status_code in [400, 403]:
+                        st.error(
+                            f"❌ Erro {response.status_code} na '{name}': "
+                            f"A planilha está **PRIVADA** no Google Sheets. "
+                            f"Altere o acesso para 'Qualquer pessoa com o link'."
+                        )
+                    else:
+                        st.error(f"❌ Erro {response.status_code} ao tentar baixar a planilha '{name}'.")
 
                 except Exception as e:
-                    st.error(f"Erro ao baixar '{name}': {e}")
-                    st.caption(f"URL gerada para download: `{convert_to_csv_url(url)}`")
+                    st.error(f"Erro inesperado ao processar '{name}': {e}")
 
-                # Pausa de 1 segundo para evitar chamadas simultâneas/atropeladas
+                # Pausa de 1 segundo para evitar bloqueio por muitas requisições seguidas
                 time.sleep(1.0)
 
             if sucessos > 0:
-                st.success("Planilhas atualizadas com sucesso!")
+                st.success(f"{sucessos} planilha(s) sincronizada(s) com sucesso!")
                 st.rerun()
 
 with col_info:
