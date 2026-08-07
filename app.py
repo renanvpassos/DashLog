@@ -336,19 +336,7 @@ with st.spinner("Sincronizando planilhas em segundo plano..."):
 # PAINEL PRINCIPAL
 # ==========================================
 st.title("📊 Monitor Operacional em Tempo Real")
-
-col_btn, col_info = st.columns([1, 3])
-
-with col_btn:
-    if st.button("🔄 Sincronizar Agora", use_container_width=True, type="primary"):
-        with st.spinner("Sincronizando planilhas manualmente..."):
-            sucessos = executar_sincronizacao()
-            if sucessos > 0:
-                st.success(f"{sucessos} planilha(s) sincronizada(s) com sucesso!")
-                st.rerun()
-
-with col_info:
-    st.caption(f"Monitorando **{len(LISTA_PLANILHAS)}** planilha(s) configurada(s) no sistema. *(Sincronização automática ativa a cada 2 min)*")
+st.caption(f"Monitorando **{len(LISTA_PLANILHAS)}** planilha(s) configurada(s). *(Atualizando e sincronizando automaticamente a cada 2 minutos)*")
 
 st.divider()
 
