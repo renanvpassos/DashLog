@@ -2,33 +2,32 @@ import os
 import re
 import json
 import time
+import io
+import requests
+import unicodedata
 from datetime import datetime, date
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo  # Fuso horário do Brasil
 import pandas as pd
 import streamlit as st
 from fpdf import FPDF
-import requests
-import io
-import unicodedata
 
 # ==========================================
-# CONFIGURAÇÕES INICIAIS
+# CONFIGURAÇÕES DE FUSO HORÁRIO E STREAMLIT
 # ==========================================
-st.set_page_config(
-    page_title="Monitor de Digitação & Estatísticas",
-    page_icon="📊",
-    layout="wide"
-)
-
-# Fuso Horário do Brasil
 TZ_BR = ZoneInfo("America/Sao_Paulo")
 
 def get_now_br():
     """Retorna o datetime atual formatado no fuso de Brasília."""
     return datetime.now(TZ_BR)
 
+st.set_page_config(
+    page_title="Monitor de Digitação & Estatísticas",
+    page_icon="📊",
+    layout="wide"
+)
+
 # ==========================================
-# CONVERSOR DE LINK (Google Sheets para CSV)
+# CONVERSOR DE LINK (Google Sheets para GViz CSV)
 # ==========================================
 def extract_spreadsheet_id(url: str) -> str:
     """Extrai o ID da planilha do Google Sheets."""
@@ -38,41 +37,39 @@ def extract_spreadsheet_id(url: str) -> str:
 def convert_to_csv_url(url: str) -> str:
     """
     Converte URLs do Google Sheets para o formato GViz CSV.
-    Se houver 'gid' na URL, utiliza. Se não houver, baixa a primeira aba sem forçar 'gid=0'.
+    Se houver 'gid' na URL, utiliza. Se não houver, baixa a primeira aba.
     """
     sheet_id = extract_spreadsheet_id(url)
     if not sheet_id:
         return url
 
-    # Verifica se há um 'gid' específico no link
     gid_match = re.search(r"[#&?]gid=([0-9]+)", url)
-    
     if gid_match:
         gid = gid_match.group(1)
         return f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&gid={gid}"
     else:
-        # Sem gid: pega a primeira aba disponível automaticamente sem dar Erro 400
         return f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv"
 
 # ==========================================
 # LINKS DAS PLANILHAS FIXOS NO CÓDIGO
 # ==========================================
 LISTA_PLANILHAS = {
-    "Planilha HENKEL": "https://docs.google.com/spreadsheets/d/1iZ9CcRjNk_C3uAWRTYO1xMGyLzGKKWLTHPguxq4pHOE/edit?usp=sharing",
-    "Planilha RENAN": "https://docs.google.com/spreadsheets/d/1zRkVSttkkpqekEdXjGPlz3-Dl7NzgqnkbGioJGuAdRY/edit?usp=sharing",
-    "Planilha ROCHE": "https://docs.google.com/spreadsheets/d/1ym-kHhuaW1pD5KNXzrmgY2QaUSol339R4fCHdGRS3K8", #ROCHE
-    "Planilha RENAN": "https://docs.google.com/spreadsheets/d/1zRkVSttkkpqekEdXjGPlz3-Dl7NzgqnkbGioJGuAdRY", #RENAN
-    "Planilha VALERIA": "https://docs.google.com/spreadsheets/d/1uJzArQ8oF19s2yYQD3BFoNeaZW_xPMdD1RvdSIWnGR8", #VALERIA
-    "Planilha SALVADOR LENNON": "https://docs.google.com/spreadsheets/d/1Q0BMTebNMSEyGqTwuQjy2r6nLeSNQE7oIhEntpUhQAA", #SALVADOR LENNON
-    "Planilha RIO LENNON": "https://docs.google.com/spreadsheets/d/10P8YgNIqxox-MqDA63DnO5yKAueAQ5GgJONDH2fu9-8", #RIO LENNON
-    "Planilha ABB": "https://docs.google.com/spreadsheets/d/1gNeE9CY8KLaI7DOajWFJcGmZ-UuS4ME8firbFkovNS4", #ABB
-    "Planilha KERING": "https://docs.google.com/spreadsheets/d/1mH3TIpm23KkNK-JODDwfd8Igqm1ZtvIeQRUTJAHLZVI", #KERING
-    "Planilha ZARA": "https://docs.google.com/spreadsheets/d/1CSX4tQoZsspQ0GmVHuzt5h0ABc28Bdd_DqyPR-rGNns", #ZARA
-    "Planilha PRADA": "https://docs.google.com/spreadsheets/d/11xDf-tkye_MeVOh_Re5_Piby9_AdVNv-_TOJyqEk9rQ", #PRADA
-    "Planilha LOUIS VUITTON": "https://docs.google.com/spreadsheets/d/1zgYootR8Dx5arj7O3Mi31nTgUgvr8xpxhatgn5DgPok", #LOUIS VUITTON
-    "Planilha FASHION DIVERSOS": "https://docs.google.com/spreadsheets/d/1Xzggnm2N0YizRHUs0V--cr5OZh5ypSbAReEK_iSchT0", #FASHION DIVERSOS
-    "Planilha RAYANE": "https://docs.google.com/spreadsheets/d/1Ch3UFNIBYKVm4BF48iB-DjCbcrzUwM0Cl_QG6NB16_4", #FASHION RAYANE
-    "Planilha ADIENT": "https://docs.google.com/spreadsheets/d/1Ii3u9yezVPscByz2q33uTGXPCNL64JV5syXArMnPeP0", #OSGT ADIENT
+    "Planilha Henkel": "https://docs.google.com/spreadsheets/d/1iZ9CcRjNk_C3uAWRTYO1xMGyLzGKKWLTHPguxq4pHOE/edit?usp=sharing",
+    "Planilha Renan": "https://docs.google.com/spreadsheets/d/1zRkVSttkkpqekEdXjGPlz3-Dl7NzgqnkbGioJGuAdRY/edit?usp=sharing",
+    "Planilha ROCHE": "https://docs.google.com/spreadsheets/d/1ym-kHhuaW1pD5KNXzrmgY2QaUSol339R4fCHdGRS3K8",
+    "Planilha RENAN": "https://docs.google.com/spreadsheets/d/1zRkVSttkkpqekEdXjGPlz3-Dl7NzgqnkbGioJGuAdRY",
+    "Planilha VALERIA": "https://docs.google.com/spreadsheets/d/1uJzArQ8oF19s2yYQD3BFoNeaZW_xPMdD1RvdSIWnGR8",
+    "Planilha SALVADOR LENNON": "https://docs.google.com/spreadsheets/d/1Q0BMTebNMSEyGqTwuQjy2r6nLeSNQE7oIhEntpUhQAA",
+    "Planilha RIO LENNON": "https://docs.google.com/spreadsheets/d/10P8YgNIqxox-MqDA63DnO5yKAueAQ5GgJONDH2fu9-8",
+    "Planilha ABB": "https://docs.google.com/spreadsheets/d/1gNeE9CY8KLaI7DOajWFJcGmZ-UuS4ME8firbFkovNS4",
+    "Planilha KERING": "https://docs.google.com/spreadsheets/d/1mH3TIpm23KkNK-JODDwfd8Igqm1ZtvIeQRUTJAHLZVI",
+    "Planilha ZARA": "https://docs.google.com/spreadsheets/d/1CSX4tQoZsspQ0GmVHuzt5h0ABc28Bdd_DqyPR-rGNns",
+    "Planilha PRADA": "https://docs.google.com/spreadsheets/d/11xDf-tkye_MeVOh_Re5_Piby9_AdVNv-_TOJyqEk9rQ",
+    "Planilha LOUIS VUITTON": "https://docs.google.com/spreadsheets/d/1zgYootR8Dx5arj7O3Mi31nTgUgvr8xpxhatgn5DgPok",
+    "Planilha FASHION DIVERSOS": "https://docs.google.com/spreadsheets/d/1Xzggnm2N0YizRHUs0V--cr5OZh5ypSbAReEK_iSchT0",
+    "Planilha RAYANE": "https://docs.google.com/spreadsheets/d/1Ch3UFNIBYKVm4BF48iB-DjCbcrzUwM0Cl_QG6NB16_4",
+    "Planilha ADIENT": "https://docs.google.com/spreadsheets/d/1Ii3u9yezVPscByz2q33uTGXPCNL64JV5syXArMnPeP0",
+    "Planilha HENKEL": "https://docs.google.com/spreadsheets/d/1iZ9CcRjNk_C3uAWRTYO1xMGyLzGKKWLTHPguxq4pHOE",
     "Planilha SCANIA": "https://docs.google.com/spreadsheets/d/1BJpKdZlGo13vxs_sJ-467_RJbP8BBbMpD89pxrkzCFM",
     "Planilha SIG COMBIBLOC": "https://docs.google.com/spreadsheets/d/1EjLNlp5-_vmRQ834JWIH0rGSqZre3MvNoiHF92RI2LQ",
 }
@@ -85,7 +82,7 @@ os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(LOGS_DIR, exist_ok=True)
 
 # ==========================================
-# GERENCIAMENTO DE LOGS E PERSISTÊNCIA
+# GERENCIAMENTO DE LOGS E PERSISTÊNCIA (COM BRASÍLIA TZ)
 # ==========================================
 def load_logs():
     if os.path.exists(LOG_FILE):
@@ -102,9 +99,10 @@ def save_logs(logs):
 
 def add_log_entry(sheet_name, digitador, referencia, acao):
     logs = load_logs()
+    now_br = get_now_br()
     novo_registro = {
-        "timestamp": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
-        "date": datetime.now().strftime("%Y-%m-%d"),
+        "timestamp": now_br.strftime("%d/%m/%Y %H:%M:%S"),
+        "date": now_br.strftime("%Y-%m-%d"),
         "sheet_name": str(sheet_name),
         "digitador": str(digitador),
         "referencia": str(referencia),
@@ -113,6 +111,9 @@ def add_log_entry(sheet_name, digitador, referencia, acao):
     logs.insert(0, novo_registro)
     save_logs(logs)
 
+# ==========================================
+# TRATAMENTO DE TEXTO E COMPARADOR DE PLANILHAS
+# ==========================================
 def normalize_text(text: str) -> str:
     """Remove acentos, espaços extras e converte para maiúsculo."""
     text = str(text).strip()
@@ -121,13 +122,11 @@ def normalize_text(text: str) -> str:
     return only_ascii.upper()
 
 def process_single_sheet_update(sheet_name, uploaded_df):
-    # 1. Trata colunas onde o dado veio colado junto ao cabeçalho (ex: 'DIGITADOR PALOMA PALOMA')
     new_columns = []
     for col in uploaded_df.columns:
         col_str = str(col).strip()
         norm_col = normalize_text(col_str)
         
-        # Se a coluna começar com DIGITADOR ou REFERENCIA, isolamos o cabeçalho
         if norm_col.startswith("DIGITADOR"):
             new_columns.append("DIGITADOR")
         elif norm_col.startswith("REFERENCIA"):
@@ -137,18 +136,16 @@ def process_single_sheet_update(sheet_name, uploaded_df):
             
     uploaded_df.columns = new_columns
 
-    # 2. Validação das colunas obrigatórias
     req_cols = ["DIGITADOR", "REFERÊNCIA"]
     missing = [col for col in req_cols if col not in uploaded_df.columns]
     
     if missing:
         st.error(
             f"❌ A planilha '{sheet_name}' não possui as colunas necessárias: {', '.join(missing)}.\n\n"
-            f"**Colunas encontradas na linha 1:** {list(uploaded_df.columns)}"
+            f"**Colunas encontradas:** {list(uploaded_df.columns)}"
         )
         return False
 
-    # 3. Processamento dos dados e geração de cache
     uploaded_df = uploaded_df.fillna("-").astype(str)
     cache_path = os.path.join(DATA_DIR, f"cache_{sheet_name.lower().replace(' ', '_')}.csv")
 
@@ -159,7 +156,6 @@ def process_single_sheet_update(sheet_name, uploaded_df):
             prev_indexed = previous_df.set_index("REFERÊNCIA")
             curr_indexed = uploaded_df.set_index("REFERÊNCIA")
 
-            # Checar alterações APENAS em registros que já existiam
             common_refs = curr_indexed.index.intersection(prev_indexed.index)
             for ref in common_refs:
                 row_prev = prev_indexed.loc[ref]
@@ -193,14 +189,14 @@ def process_single_sheet_update(sheet_name, uploaded_df):
     return True
 
 # ==========================================
-# RELATÓRIO PDF
+# RELATÓRIO PDF (CORRIGIDO)
 # ==========================================
 class PDFReport(FPDF):
     def header(self):
         self.set_font("Helvetica", "B", 14)
         self.cell(0, 10, "Relatório de Atividades dos Digitadores", border=False, new_x="LMARGIN", new_y="NEXT", align="C")
         self.set_font("Helvetica", "", 9)
-        self.cell(0, 5, f"Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}", border=False, new_x="LMARGIN", new_y="NEXT", align="C")
+        self.cell(0, 5, f"Gerado em: {get_now_br().strftime('%d/%m/%Y %H:%M:%S')}", border=False, new_x="LMARGIN", new_y="NEXT", align="C")
         self.ln(5)
 
     def footer(self):
@@ -213,8 +209,12 @@ def generate_pdf(logs_filtered, start_date, end_date):
     pdf.add_page()
     pdf.set_font("Helvetica", "", 10)
 
+    # Tratamento caso start_date/end_date venham como string ou objeto date
+    str_inicio = start_date.strftime('%d/%m/%Y') if hasattr(start_date, 'strftime') else str(start_date)
+    str_fim = end_date.strftime('%d/%m/%Y') if hasattr(end_date, 'strftime') else str(end_date)
+
     pdf.set_font("Helvetica", "B", 11)
-    pdf.cell(0, 8, f"Período selecionado: {start_date.strftime('%d/%m/%Y')} a {end_date.strftime('%d/%m/%Y')}", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 8, f"Período selecionado: {str_inicio} a {str_fim}", new_x="LMARGIN", new_y="NEXT")
     pdf.cell(0, 8, f"Total de Registros: {len(logs_filtered)}", new_x="LMARGIN", new_y="NEXT")
     pdf.ln(4)
 
@@ -253,7 +253,7 @@ if not st.session_state.authenticated:
     st.stop()
 
 # ==========================================
-# PAINEL PRINCIPAL (FORMATO BR E HORÁRIO DE BRASÍLIA)
+# PAINEL PRINCIPAL
 # ==========================================
 st.title("📊 Monitor de Digitação em Tempo Real")
 
@@ -311,10 +311,8 @@ with col_info:
 
 st.divider()
 
-# --- CARREGAR LOGS E FILTRAGEM POR DATA BRASILEIRA ---
+# --- CARREGAR LOGS E SELEÇÃO DE DATAS ---
 logs_all = load_logs()
-
-# Obter a data atual no fuso do Brasil
 hoje_br = get_now_br().date()
 
 st.subheader("📅 Seleção de Período de Análise")
@@ -324,14 +322,14 @@ with col_dt1:
     dt_inicio = st.date_input(
         "Data Inicial",
         value=hoje_br,
-        format="DD/MM/YYYY"  # Formato Brasileiro
+        format="DD/MM/YYYY"
     )
 
 with col_dt2:
     dt_fim = st.date_input(
         "Data Final",
         value=hoje_br,
-        format="DD/MM/YYYY"  # Formato Brasileiro
+        format="DD/MM/YYYY"
     )
 
 with col_search:
@@ -344,7 +342,6 @@ with col_search:
 logs_periodo = []
 for l in logs_all:
     try:
-        # Suporta tanto ano-mês-dia (salvo no JSON) quanto formato tratado
         log_dt_str = l.get("date", "")
         if "-" in log_dt_str:
             log_dt = datetime.strptime(log_dt_str, "%Y-%m-%d").date()
@@ -356,7 +353,6 @@ for l in logs_all:
     except Exception:
         pass
 
-# Converter logs do período para DataFrame para análise estatística
 if logs_periodo:
     df_logs_periodo = pd.DataFrame(logs_periodo)
 else:
@@ -404,7 +400,7 @@ st.divider()
 # --- LOG DE ATIVIDADES EM TEMPO REAL ---
 st.subheader("🪵 Log de Atividades dos Digitadores")
 
-# Filtragem Adicional por Texto (Barra de Pesquisa)
+# Filtragem Adicional por Texto
 filtered_logs = []
 for log in logs_periodo:
     matches_search = True
@@ -424,8 +420,8 @@ if logs_periodo:
     try:
         pdf_bytes = generate_pdf(
             logs_periodo,
-            dt_inicio.strftime('%d/%m/%Y'),
-            dt_fim.strftime('%d/%m/%Y')
+            dt_inicio,
+            dt_fim
         )
         st.download_button(
             label="📄 Extrair Relatório PDF (Período Selecionado)",
@@ -436,27 +432,13 @@ if logs_periodo:
     except Exception as e:
         st.error(f"Erro ao gerar PDF: {e}")
 
-# Container de Logs com Formatação PT-BR de Horário e Data
+# Container de Logs
 st.markdown("**Histórico de Eventos:**")
 log_container = st.container(height=380, border=True)
 
 with log_container:
     if filtered_logs:
         for entry in filtered_logs:
-            # Tratamento visual do timestamp para o padrão brasileiro (DD/MM/YYYY HH:MM:SS)
-            raw_ts = entry.get('timestamp', '')
-            ts_exibicao = raw_ts
-            try:
-                # Tenta converter timestamp padrão ISO/YYYY-MM-DD para exibição BR
-                if "T" in raw_ts or "-" in raw_ts[:10]:
-                    dt_obj = datetime.fromisoformat(raw_ts.replace("Z", "+00:00"))
-                    if dt_obj.tzinfo is None:
-                        dt_obj = dt_obj.replace(tzinfo=ZoneInfo("UTC"))
-                    dt_br = dt_obj.astimezone(TZ_BR)
-                    ts_exibicao = dt_br.strftime("%d/%m/%Y %H:%M:%S")
-            except Exception:
-                pass
-
-            st.markdown(f"`{ts_exibicao}` — **{entry['mensagem']}**")
+            st.markdown(f"`{entry['timestamp']}` — **{entry['mensagem']}**")
     else:
         st.write("Nenhum registro encontrado para os filtros selecionados.")
