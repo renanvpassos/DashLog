@@ -16,12 +16,12 @@ st.set_page_config(
 
 # ==========================================
 # SEUS LINKS DO GOOGLE SHEETS FIXOS NO CÓDIGO
-# Insira aqui todos os nomes e links públicos (CSV) das suas planilhas
+# Chave: Nome da Planilha | Valor: Link formatado para CSV
 # ==========================================
 LISTA_PLANILHAS = {
-    "https://docs.google.com/spreadsheets/d/1iZ9CcRjNk_C3uAWRTYO1xMGyLzGKKWLTHPguxq4pHOE/edit?gid=1082960033#gid=1082960033",
-    # Adicione quantas planilhas precisar:
-    # "Planilha 3": "https://docs.google.com/spreadsheets/d/e/COLE_SEU_LINK_CSV_3/pub?output=csv",
+    "Planilha Principal": "https://docs.google.com/spreadsheets/d/1iZ9CcRjNk_C3uAWRTYO1xMGyLzGKKWLTHPguxq4pHOE/export?format=csv&gid=1082960033",
+    # Para adicionar mais, basta incluir uma vírgula e a próxima linha:
+    # "Planilha 2": "https://docs.google.com/spreadsheets/d/OUTRO_ID/export?format=csv&gid=0",
 }
 
 DATA_DIR = "data"
@@ -189,8 +189,7 @@ with col_btn:
     if st.button("🔄 Sincronizar Planilhas", use_container_width=True, type="primary"):
         with st.spinner("Baixando dados e calculando alterações..."):
             sucessos = 0
-            for idx, url in enumerate(LISTA_PLANILHAS, start=1):
-                name = f"Planilha {idx}"
+            for name, url in LISTA_PLANILHAS.items():
                 try:
                     df_dl = pd.read_csv(url, dtype=str)
                     if process_single_sheet_update(name, df_dl):
