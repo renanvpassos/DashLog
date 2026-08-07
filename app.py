@@ -5,8 +5,6 @@ from datetime import datetime, date
 import pandas as pd
 import streamlit as st
 from fpdf import FPDF
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
 
 # ==========================================
 # CONFIGURAÇÕES INICIAIS
@@ -18,93 +16,33 @@ st.set_page_config(
 )
 
 # ==========================================
-# INTEGRAÇÃO COM GOOGLE DRIVE API
+# CONVERSOR DE LINK (Google Sheets para CSV)
 # ==========================================
-def get_google_drive_service():
-    """Autentica na API do Google usando secrets do Streamlit ou arquivo de chave local."""
-    SCOPES = ['https://www.googleapis.com/auth/drive.metadata.readonly']
-    
-    # Prioridade 1: Streamlit Secrets
-    if "gcp_service_account" in st.secrets:
-        creds_dict = dict(st.secrets["gcp_service_account"])
-        creds = service_account.Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
-        return build('drive', 'v3', credentials=creds)
-    
-    # Prioridade 2: Arquivo local credentials.json
-    elif os.path.exists("credentials.json"):
-        creds = service_account.Credentials.from_service_account_file("credentials.json", scopes=SCOPES)
-        return build('drive', 'v3', credentials=creds)
-    
-    return None
-
 def extract_spreadsheet_id(url: str) -> str:
-    """Extrai o ID do Google Sheets a partir da URL."""
+    """Extrai o ID da planilha do Google Sheets."""
     match = re.search(r"/d/([a-zA-Z0-9-_]+)", url)
     return match.group(1) if match else None
 
-def get_last_editor_from_google(sheet_url: str) -> str:
-    """Consulta a API do Google Drive para retornar o nome/email da última pessoa que editou."""
-    file_id = extract_spreadsheet_id(sheet_url)
-    if not file_id:
-        return "Conta Google Desconhecida"
-
-    try:
-        service = get_google_drive_service()
-        if not service:
-            return "Sem Credenciais Google"
-
-        revisions = service.revisions().list(
-            fileId=file_id, 
-            fields="revisions(lastModifyingUser)"
-        ).execute()
-        
-        items = revisions.get('revisions', [])
-        if items:
-            last_user = items[-1].get('lastModifyingUser', {})
-            display_name = last_user.get('displayName')
-            email = last_user.get('emailAddress')
-            
-            if display_name and email:
-                return f"{display_name} ({email})"
-            return display_name or email or "Usuário Google Anônimo"
-    except Exception as e:
-        st.caption(f"Aviso API Google Drive: {e}")
-    
-    return "Conta Google Não Identificada"
-
-# ==========================================
-# CONVERSOR DE LINK (Google Sheets para CSV)
-# ==========================================
 def convert_to_csv_url(url: str) -> str:
+    """
+    Converte URLs do Google Sheets para o formato de exportação direta em CSV.
+    Garante suporte para parâmetros 'gid' posicionados em qualquer parte do link.
+    """
     sheet_id = extract_spreadsheet_id(url)
     if not sheet_id:
         return url
 
+    # Busca o ID da aba (gid) na URL
     gid_match = re.search(r"[#&?]gid=([0-9]+)", url)
     gid = gid_match.group(1) if gid_match else "0"
 
     return f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
 
 # ==========================================
-# LINKS DAS PLANILHAS
+# LINKS DAS PLANILHAS FIXOS NO CÓDIGO
 # ==========================================
 LISTA_PLANILHAS = {
-    "Planilha ROCHE": "https://docs.google.com/spreadsheets/d/1ym-kHhuaW1pD5KNXzrmgY2QaUSol339R4fCHdGRS3K8", #ROCHE
-    "Planilha RENAN": "https://docs.google.com/spreadsheets/d/1zRkVSttkkpqekEdXjGPlz3-Dl7NzgqnkbGioJGuAdRY", #RENAN
-    "Planilha VALERIA": "https://docs.google.com/spreadsheets/d/1uJzArQ8oF19s2yYQD3BFoNeaZW_xPMdD1RvdSIWnGR8", #VALERIA
-    "Planilha SALVADOR LENNON": "https://docs.google.com/spreadsheets/d/1Q0BMTebNMSEyGqTwuQjy2r6nLeSNQE7oIhEntpUhQAA", #SALVADOR LENNON
-    "Planilha RIO LENNON": "https://docs.google.com/spreadsheets/d/10P8YgNIqxox-MqDA63DnO5yKAueAQ5GgJONDH2fu9-8", #RIO LENNON
-    "Planilha ABB": "https://docs.google.com/spreadsheets/d/1gNeE9CY8KLaI7DOajWFJcGmZ-UuS4ME8firbFkovNS4", #ABB
-    "Planilha KERING": "https://docs.google.com/spreadsheets/d/1mH3TIpm23KkNK-JODDwfd8Igqm1ZtvIeQRUTJAHLZVI", #KERING
-    "Planilha ZARA": "https://docs.google.com/spreadsheets/d/1CSX4tQoZsspQ0GmVHuzt5h0ABc28Bdd_DqyPR-rGNns", #ZARA
-    "Planilha PRADA": "https://docs.google.com/spreadsheets/d/11xDf-tkye_MeVOh_Re5_Piby9_AdVNv-_TOJyqEk9rQ", #PRADA
-    "Planilha LOUIS VUITTON": "https://docs.google.com/spreadsheets/d/1zgYootR8Dx5arj7O3Mi31nTgUgvr8xpxhatgn5DgPok", #LOUIS VUITTON
-    "Planilha FASHION DIVERSOS": "https://docs.google.com/spreadsheets/d/1Xzggnm2N0YizRHUs0V--cr5OZh5ypSbAReEK_iSchT0", #FASHION DIVERSOS
-    "Planilha RAYANE": "https://docs.google.com/spreadsheets/d/1Ch3UFNIBYKVm4BF48iB-DjCbcrzUwM0Cl_QG6NB16_4", #FASHION RAYANE
-    "Planilha ADIENT": "https://docs.google.com/spreadsheets/d/1Ii3u9yezVPscByz2q33uTGXPCNL64JV5syXArMnPeP0", #OSGT ADIENT
-    "Planilha HENKEL": "https://docs.google.com/spreadsheets/d/1iZ9CcRjNk_C3uAWRTYO1xMGyLzGKKWLTHPguxq4pHOE",
-    "Planilha SCANIA": "https://docs.google.com/spreadsheets/d/1BJpKdZlGo13vxs_sJ-467_RJbP8BBbMpD89pxrkzCFM",
-    "Planilha SIG COMBIBLOC": "https://docs.google.com/spreadsheets/d/1EjLNlp5-_vmRQ834JWIH0rGSqZre3MvNoiHF92RI2LQ",
+    "Planilha Principal": "https://docs.google.com/spreadsheets/d/1iZ9CcRjNk_C3uAWRTYO1xMGyLzGKKWLTHPguxq4pHOE/edit?gid=1082960033#gid=1082960033",
 }
 
 DATA_DIR = "data"
@@ -146,7 +84,7 @@ def add_log_entry(sheet_name, digitador, referencia, acao):
 # ==========================================
 # LÓGICA DE COMPARAÇÃO E CACHE LOCAL
 # ==========================================
-def process_single_sheet_update(sheet_name, raw_url, uploaded_df):
+def process_single_sheet_update(sheet_name, uploaded_df):
     req_cols = ["DIGITADOR", "REFERÊNCIA"]
     missing = [col for col in req_cols if col not in uploaded_df.columns]
     if missing:
@@ -163,7 +101,7 @@ def process_single_sheet_update(sheet_name, raw_url, uploaded_df):
             prev_indexed = previous_df.set_index("REFERÊNCIA")
             curr_indexed = uploaded_df.set_index("REFERÊNCIA")
 
-            # Checar alterações apenas em registros que JÁ EXISTIAM
+            # Checar alterações APENAS em registros que já existiam
             common_refs = curr_indexed.index.intersection(prev_indexed.index)
             for ref in common_refs:
                 row_prev = prev_indexed.loc[ref]
@@ -176,7 +114,7 @@ def process_single_sheet_update(sheet_name, raw_url, uploaded_df):
 
                 digitador = str(row_curr.get("DIGITADOR", "")).strip()
 
-                # REGRA: Só registra se o DIGITADOR estiver devidamente preenchido
+                # REGRA: Só registra no log se a coluna DIGITADOR estiver preenchida
                 if digitador and digitador not in ["-", "nan", "None"]:
                     for col in curr_indexed.columns:
                         val_old = row_prev.get(col, "-")
@@ -189,8 +127,6 @@ def process_single_sheet_update(sheet_name, raw_url, uploaded_df):
                                 acao = f"alterou o campo '{col}' de '{val_old}' para '{val_new}'"
                             
                             add_log_entry(sheet_name, digitador, ref, acao)
-
-            # NOTA: O bloco de `new_refs` foi removido para não gerar logs ao criar novas linhas.
 
         except Exception as e:
             st.warning(f"Erro ao comparar alterações da planilha '{sheet_name}': {e}")
@@ -267,16 +203,17 @@ col_btn, col_info = st.columns([1, 3])
 
 with col_btn:
     if st.button("🔄 Sincronizar Planilhas", use_container_width=True, type="primary"):
-        with st.spinner("Baixando dados e identificando revisões no Google Drive..."):
+        with st.spinner("Baixando dados e calculando alterações..."):
             sucessos = 0
             for name, url in LISTA_PLANILHAS.items():
                 try:
                     csv_url = convert_to_csv_url(url)
                     df_dl = pd.read_csv(csv_url, dtype=str)
-                    if process_single_sheet_update(name, url, df_dl):
+                    if process_single_sheet_update(name, df_dl):
                         sucessos += 1
                 except Exception as e:
                     st.error(f"Erro ao baixar '{name}': {e}")
+                    st.caption(f"URL gerada para download: `{convert_to_csv_url(url)}`")
             if sucessos > 0:
                 st.success("Planilhas atualizadas com sucesso!")
                 st.rerun()
