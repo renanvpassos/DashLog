@@ -21,7 +21,7 @@ def get_now_br():
     return datetime.now(TZ_BR)
 
 st.set_page_config(
-    page_title="Monitor de Digitação & Estatísticas",
+    page_title="Monitor Operacional",
     page_icon="📊",
     layout="wide"
 )
@@ -255,7 +255,7 @@ if not st.session_state.authenticated:
 # ==========================================
 # PAINEL PRINCIPAL
 # ==========================================
-st.title("📊 Monitor de Digitação em Tempo Real")
+st.title("📊 Monitor Operacional em Tempo Real")
 
 col_btn, col_info = st.columns([1, 3])
 
