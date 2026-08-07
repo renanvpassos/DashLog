@@ -108,27 +108,28 @@ def add_log_entry(sheet_name, digitador, referencia, acao):
 def normalize_text(text: str) -> str:
     """Remove acentos, espaços extras e converte para maiúsculo."""
     text = str(text).strip()
-    # Normaliza unicode para separar acentos e remove-os
     nfkd_form = unicodedata.normalize('NFKD', text)
     only_ascii = "".join([c for c in nfkd_form if not unicodedata.combining(c)])
     return only_ascii.upper()
 
 def process_single_sheet_update(sheet_name, uploaded_df):
-    # 1. Limpa espaços invisíveis de todas as colunas
-    uploaded_df.columns = [str(col).strip() for col in uploaded_df.columns]
-
-    # 2. Mapeia colunas existentes para os nomes padrão esperados
-    col_mapping = {}
+    # 1. Trata colunas onde o dado veio colado junto ao cabeçalho (ex: 'DIGITADOR PALOMA PALOMA')
+    new_columns = []
     for col in uploaded_df.columns:
-        norm_col = normalize_text(col)
-        if norm_col == "DIGITADOR":
-            col_mapping[col] = "DIGITADOR"
-        elif norm_col == "REFERENCIA":
-            col_mapping[col] = "REFERÊNCIA"
+        col_str = str(col).strip()
+        norm_col = normalize_text(col_str)
+        
+        # Se a coluna começar com DIGITADOR ou REFERENCIA, isolamos o cabeçalho
+        if norm_col.startswith("DIGITADOR"):
+            new_columns.append("DIGITADOR")
+        elif norm_col.startswith("REFERENCIA"):
+            new_columns.append("REFERÊNCIA")
+        else:
+            new_columns.append(col_str)
+            
+    uploaded_df.columns = new_columns
 
-    uploaded_df = uploaded_df.rename(columns=col_mapping)
-
-    # 3. Validação das colunas obrigatórias
+    # 2. Validação das colunas obrigatórias
     req_cols = ["DIGITADOR", "REFERÊNCIA"]
     missing = [col for col in req_cols if col not in uploaded_df.columns]
     
@@ -139,7 +140,7 @@ def process_single_sheet_update(sheet_name, uploaded_df):
         )
         return False
 
-    # 4. Processamento dos dados
+    # 3. Processamento dos dados e geração de cache
     uploaded_df = uploaded_df.fillna("-").astype(str)
     cache_path = os.path.join(DATA_DIR, f"cache_{sheet_name.lower().replace(' ', '_')}.csv")
 
