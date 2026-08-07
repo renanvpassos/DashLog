@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo  # Fuso horário do Brasil
 import pandas as pd
 import streamlit as st
 from fpdf import FPDF
+from supabase import create_client, Client
 
 # ==========================================
 # CONFIGURAÇÕES DE FUSO HORÁRIO E STREAMLIT
@@ -25,6 +26,20 @@ st.set_page_config(
     page_icon="📊",
     layout="wide"
 )
+
+# ==========================================
+# CONEXÃO COM O SUPABASE
+# ==========================================
+@st.cache_resource
+def init_supabase() -> Client:
+    url = st.secrets.get("SUPABASE_URL")
+    key = st.secrets.get("SUPABASE_KEY")
+    if not url or not key:
+        st.error("❌ Configurações do Supabase (SUPABASE_URL / SUPABASE_KEY) não encontradas nos Secrets.")
+        st.stop()
+    return create_client(url, key)
+
+supabase = init_supabase()
 
 # ==========================================
 # CONVERSOR DE LINK (Google Sheets para GViz CSV)
@@ -75,30 +90,29 @@ LISTA_PLANILHAS = {
 }
 
 DATA_DIR = "data"
-LOGS_DIR = "logs"
-LOG_FILE = os.path.join(LOGS_DIR, "activity_log.json")
-
 os.makedirs(DATA_DIR, exist_ok=True)
-os.makedirs(LOGS_DIR, exist_ok=True)
 
 # ==========================================
-# GERENCIAMENTO DE LOGS E PERSISTÊNCIA (COM BRASÍLIA TZ)
+# GERENCIAMENTO DE LOGS VIA SUPABASE
 # ==========================================
-def load_logs():
-    if os.path.exists(LOG_FILE):
-        try:
-            with open(LOG_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return []
-    return []
-
-def save_logs(logs):
-    with open(LOG_FILE, "w", encoding="utf-8") as f:
-        json.dump(logs, f, ensure_ascii=False, indent=2)
+def load_logs_by_period(start_date: date, end_date: date):
+    """Carrega logs do Supabase dentro do período especificado."""
+    try:
+        response = (
+            supabase.table("atividades")
+            .select("*")
+            .gte("date", start_date.isoformat())
+            .lte("date", end_date.isoformat())
+            .order("id", desc=True)
+            .execute()
+        )
+        return response.data if response.data else []
+    except Exception as e:
+        st.error(f"Erro ao buscar logs do Supabase: {e}")
+        return []
 
 def add_log_entry(sheet_name, digitador, referencia, acao):
-    logs = load_logs()
+    """Insere um novo registro de atividade no banco Supabase."""
     now_br = get_now_br()
     novo_registro = {
         "timestamp": now_br.strftime("%d/%m/%Y %H:%M:%S"),
@@ -108,8 +122,10 @@ def add_log_entry(sheet_name, digitador, referencia, acao):
         "referencia": str(referencia),
         "mensagem": f"[{sheet_name}] {digitador} {acao} na Referência {referencia}"
     }
-    logs.insert(0, novo_registro)
-    save_logs(logs)
+    try:
+        supabase.table("atividades").insert(novo_registro).execute()
+    except Exception as e:
+        st.error(f"Erro ao salvar registro no Supabase: {e}")
 
 # ==========================================
 # TRATAMENTO DE TEXTO E COMPARADOR DE PLANILHAS
@@ -209,7 +225,6 @@ def generate_pdf(logs_filtered, start_date, end_date):
     pdf.add_page()
     pdf.set_font("Helvetica", "", 10)
 
-    # Tratamento caso start_date/end_date venham como string ou objeto date
     str_inicio = start_date.strftime('%d/%m/%Y') if hasattr(start_date, 'strftime') else str(start_date)
     str_fim = end_date.strftime('%d/%m/%Y') if hasattr(end_date, 'strftime') else str(end_date)
 
@@ -311,8 +326,7 @@ with col_info:
 
 st.divider()
 
-# --- CARREGAR LOGS E SELEÇÃO DE DATAS ---
-logs_all = load_logs()
+# --- SELEÇÃO DE DATAS E BUSCA NO SUPABASE ---
 hoje_br = get_now_br().date()
 
 st.subheader("📅 Seleção de Período de Análise")
@@ -338,20 +352,8 @@ with col_search:
         placeholder="Nome do digitador ou número de referência..."
     )
 
-# Filtrar Logs pelo Período Selecionado
-logs_periodo = []
-for l in logs_all:
-    try:
-        log_dt_str = l.get("date", "")
-        if "-" in log_dt_str:
-            log_dt = datetime.strptime(log_dt_str, "%Y-%m-%d").date()
-        else:
-            log_dt = datetime.strptime(log_dt_str, "%d/%m/%Y").date()
-
-        if dt_inicio <= log_dt <= dt_fim:
-            logs_periodo.append(l)
-    except Exception:
-        pass
+# Busca logs direto no banco do Supabase referente ao período
+logs_periodo = load_logs_by_period(dt_inicio, dt_fim)
 
 if logs_periodo:
     df_logs_periodo = pd.DataFrame(logs_periodo)
