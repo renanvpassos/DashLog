@@ -279,8 +279,7 @@ with col_btn:
                     elif response.status_code == 400:
                         st.error(
                             f"❌ **Erro 400 na '{name}'**: "
-                            f"A aba (gid) informada não existe ou a planilha possui estruturas corrompidas. "
-                            f"Verifique o link ou a aba selecionada."
+                            f"A aba (gid) informada não existe ou a planilha possui estruturas corrompidas."
                         )
                     elif response.status_code == 403:
                         st.error(
@@ -304,64 +303,17 @@ with col_info:
 
 st.divider()
 
-# --- CARREGAR CACHES LOCAIS PARA ESTATÍSTICAS ---
-all_dfs = {}
-for name in LISTA_PLANILHAS.keys():
-    cache_path = os.path.join(DATA_DIR, f"cache_{name.lower().replace(' ', '_')}.csv")
-    if os.path.exists(cache_path):
-        try:
-            df_cache = pd.read_csv(cache_path, dtype=str)
-            df_cache["PLANILHA_ORIGEM"] = name
-            all_dfs[name] = df_cache
-        except Exception:
-            pass
-
-# --- ESTATÍSTICAS ---
-if all_dfs:
-    st.subheader("📈 Estatísticas")
-    
-    df_consolidado = pd.concat(all_dfs.values(), ignore_index=True)
-    
-    col_m1, col_m2, col_m3 = st.columns(3)
-    col_m1.metric("Total de Processos", len(df_consolidado))
-    col_m2.metric("Digitadores Ativos", df_consolidado["DIGITADOR"].nunique() if "DIGITADOR" in df_consolidado.columns else 0)
-    col_m3.metric("Planilhas no Sistema", len(all_dfs))
-
-    tab_names = ["🌐 Consolidado (Todas)"] + list(all_dfs.keys())
-    tabs = st.tabs(tab_names)
-    
-    with tabs[0]:
-        c1, c2 = st.columns(2)
-        with c1:
-            st.markdown("**Processos por Digitador (Geral)**")
-            if "DIGITADOR" in df_consolidado.columns:
-                st.bar_chart(df_consolidado["DIGITADOR"].value_counts())
-        with c2:
-            st.markdown("**Processos por Planilha**")
-            st.bar_chart(df_consolidado["PLANILHA_ORIGEM"].value_counts())
-
-    for idx, sheet_key in enumerate(all_dfs.keys(), start=1):
-        with tabs[idx]:
-            df_sheet = all_dfs[sheet_key]
-            c_s1, c_s2 = st.columns(2)
-            with c_s1:
-                st.markdown("**Processos por Digitador**")
-                if "DIGITADOR" in df_sheet.columns:
-                    st.bar_chart(df_sheet["DIGITADOR"].value_counts())
-            with c_s2:
-                status_col = next((c for c in df_sheet.columns if c.upper() in ["STATUS", "SITUAÇÃO", "SITUACAO"]), None)
-                if status_col:
-                    st.markdown(f"**Status ({status_col})**")
-                    st.bar_chart(df_sheet[status_col].value_counts())
-
-st.divider()
-
-# --- LOG DE ATIVIDADES EM TEMPO REAL ---
-st.subheader("🪵 Log de Atividades dos Digitadores")
-
+# --- CARREGAR LOGS E FILTRAGEM POR DATA ---
 logs_all = load_logs()
 
+st.subheader("📅 Seleção de Período de Análise")
 col_search, col_dt1, col_dt2 = st.columns([2, 1, 1])
+
+with col_dt1:
+    dt_inicio = st.date_input("Data Inicial", value=date.today())
+
+with col_dt2:
+    dt_fim = st.date_input("Data Final", value=date.today())
 
 with col_search:
     search_query = st.text_input(
@@ -369,15 +321,67 @@ with col_search:
         placeholder="Nome do digitador ou número de referência..."
     )
 
-with col_dt1:
-    dt_inicio = st.date_input("Data Inicial (PDF)", value=date.today())
+# Filtrar Logs pelo Período Selecionado
+logs_periodo = []
+for l in logs_all:
+    try:
+        log_dt = datetime.strptime(l["date"], "%Y-%m-%d").date()
+        if dt_inicio <= log_dt <= dt_fim:
+            logs_periodo.append(l)
+    except Exception:
+        pass
 
-with col_dt2:
-    dt_fim = st.date_input("Data Final (PDF)", value=date.today())
+# Converter logs do período para DataFrame para análise estatística
+if logs_periodo:
+    df_logs_periodo = pd.DataFrame(logs_periodo)
+else:
+    df_logs_periodo = pd.DataFrame(columns=["timestamp", "date", "sheet_name", "digitador", "referencia", "mensagem"])
 
-# Filtragem do Log
+st.divider()
+
+# --- ESTATÍSTICAS BASEADAS NO PERÍODO SELECIONADO ---
+st.subheader(f"📈 Estatísticas no Período ({dt_inicio.strftime('%d/%m/%Y')} a {dt_fim.strftime('%d/%m/%Y')})")
+
+if not df_logs_periodo.empty:
+    col_m1, col_m2, col_m3 = st.columns(3)
+    col_m1.metric("Ações Registradas no Período", len(df_logs_periodo))
+    col_m2.metric("Digitadores Ativos", df_logs_periodo["digitador"].nunique())
+    col_m3.metric("Planilhas com Atividade", df_logs_periodo["sheet_name"].nunique())
+
+    planilhas_com_log = ["🌐 Consolidado (Todas)"] + sorted(list(df_logs_periodo["sheet_name"].unique()))
+    tabs = st.tabs(planilhas_com_log)
+    
+    with tabs[0]:
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("**Atividades por Digitador (Geral)**")
+            st.bar_chart(df_logs_periodo["digitador"].value_counts())
+        with c2:
+            st.markdown("**Atividades por Planilha**")
+            st.bar_chart(df_logs_periodo["sheet_name"].value_counts())
+
+    for idx, sheet_key in enumerate(planilhas_com_log[1:], start=1):
+        with tabs[idx]:
+            df_sheet_logs = df_logs_periodo[df_logs_periodo["sheet_name"] == sheet_key]
+            
+            c_s1, c_s2 = st.columns(2)
+            with c_s1:
+                st.markdown("**Atividades por Digitador**")
+                st.bar_chart(df_sheet_logs["digitador"].value_counts())
+            with c_s2:
+                st.markdown("**Ações mais Frequentes**")
+                st.bar_chart(df_sheet_logs["referencia"].value_counts().head(10))
+else:
+    st.info("Nenhuma atividade registrada no período selecionado.")
+
+st.divider()
+
+# --- LOG DE ATIVIDADES EM TEMPO REAL ---
+st.subheader("🪵 Log de Atividades dos Digitadores")
+
+# Filtragem Adicional por Texto (Barra de Pesquisa) sobre os logs do período
 filtered_logs = []
-for log in logs_all:
+for log in logs_periodo:
     matches_search = True
     if search_query:
         q = search_query.lower()
@@ -390,19 +394,10 @@ for log in logs_all:
     if matches_search:
         filtered_logs.append(log)
 
-# Filtro para o PDF
-logs_for_pdf = []
-for l in logs_all:
+# Botão de Exportação de PDF
+if logs_periodo:
     try:
-        log_dt = datetime.strptime(l["date"], "%Y-%m-%d").date()
-        if dt_inicio <= log_dt <= dt_fim:
-            logs_for_pdf.append(l)
-    except Exception:
-        pass
-
-if logs_for_pdf:
-    try:
-        pdf_bytes = generate_pdf(logs_for_pdf, dt_inicio, dt_fim)
+        pdf_bytes = generate_pdf(logs_periodo, dt_inicio, dt_fim)
         st.download_button(
             label="📄 Extrair Relatório PDF (Período Selecionado)",
             data=bytes(pdf_bytes),
@@ -411,10 +406,8 @@ if logs_for_pdf:
         )
     except Exception as e:
         st.error(f"Erro ao gerar PDF: {e}")
-else:
-    st.info("Nenhum registro no período selecionado para exportação.")
 
-# Container de Logs Permanente
+# Container de Logs
 st.markdown("**Histórico de Eventos:**")
 log_container = st.container(height=380, border=True)
 
@@ -423,4 +416,4 @@ with log_container:
         for entry in filtered_logs:
             st.markdown(f"`{entry['timestamp']}` — **{entry['mensagem']}**")
     else:
-        st.write("Nenhum registro encontrado para a busca informada.")
+        st.write("Nenhum registro encontrado para os filtros selecionados.")
