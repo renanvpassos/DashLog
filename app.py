@@ -171,7 +171,7 @@ if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
 if not st.session_state.authenticated:
-    st.markdown("<br><br>", unsafe_allow_headers=True)
+    st.write("") # Ou simplesmente remova o st.markdown
     col1, col2, col3 = st.columns([1, 2, 1])
 
     with col2:
