@@ -28,18 +28,22 @@ def extract_spreadsheet_id(url: str) -> str:
 
 def convert_to_csv_url(url: str) -> str:
     """
-    Converte URLs do Google Sheets para o formato de exportação direta em CSV.
-    Garante suporte para parâmetros 'gid' posicionados em qualquer parte do link.
+    Converte URLs do Google Sheets para o formato GViz CSV.
+    Se houver 'gid' na URL, utiliza. Se não houver, baixa a primeira aba sem forçar 'gid=0'.
     """
     sheet_id = extract_spreadsheet_id(url)
     if not sheet_id:
         return url
 
-    # Busca o ID da aba (gid) na URL
+    # Verifica se há um 'gid' específico no link
     gid_match = re.search(r"[#&?]gid=([0-9]+)", url)
-    gid = gid_match.group(1) if gid_match else "0"
-
-    return f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
+    
+    if gid_match:
+        gid = gid_match.group(1)
+        return f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&gid={gid}"
+    else:
+        # Sem gid: pega a primeira aba disponível automaticamente sem dar Erro 400
+        return f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv"
 
 # ==========================================
 # LINKS DAS PLANILHAS FIXOS NO CÓDIGO
@@ -237,30 +241,31 @@ with col_btn:
                 try:
                     csv_url = convert_to_csv_url(url)
                     
-                    # 1. Faz o download do CSV via requests (trata redirecionamentos do Google corretamente)
                     response = requests.get(csv_url, headers=headers, timeout=15)
                     
-                    # 2. Verifica se a resposta foi bem-sucedida (HTTP 200 OK)
                     if response.status_code == 200:
-                        # Converte a resposta em texto para um arquivo em memória que o pandas lê
                         df_dl = pd.read_csv(io.StringIO(response.text), dtype=str)
                         
                         if process_single_sheet_update(name, df_dl):
                             sucessos += 1
                             
-                    elif response.status_code in [400, 403]:
+                    elif response.status_code == 400:
                         st.error(
-                            f"❌ Erro {response.status_code} na '{name}': "
-                            f"A planilha está **PRIVADA** no Google Sheets. "
-                            f"Altere o acesso para 'Qualquer pessoa com o link'."
+                            f"❌ **Erro 400 na '{name}'**: "
+                            f"A aba (gid) informada não existe ou a planilha possui estruturas corrompidas. "
+                            f"Verifique o link ou a aba selecionada."
+                        )
+                    elif response.status_code == 403:
+                        st.error(
+                            f"❌ **Erro 403 na '{name}'**: "
+                            f"Acesso negado. Verifique se as permissões de compartilhamento estão abertas."
                         )
                     else:
-                        st.error(f"❌ Erro {response.status_code} ao tentar baixar a planilha '{name}'.")
+                        st.error(f"❌ Erro HTTP {response.status_code} na planilha '{name}'.")
 
                 except Exception as e:
                     st.error(f"Erro inesperado ao processar '{name}': {e}")
 
-                # Pausa de 1 segundo para evitar bloqueio por muitas requisições seguidas
                 time.sleep(1.0)
 
             if sucessos > 0:
