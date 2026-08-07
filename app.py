@@ -8,6 +8,7 @@ import streamlit as st
 from fpdf import FPDF
 import requests
 import io
+import unicodedata
 
 # ==========================================
 # CONFIGURAÇÕES INICIAIS
@@ -104,47 +105,41 @@ def add_log_entry(sheet_name, digitador, referencia, acao):
     logs.insert(0, novo_registro)
     save_logs(logs)
 
-# ==========================================
-# LÓGICA DE COMPARAÇÃO E CACHE LOCAL
-# ==========================================
-def process_single_sheet_update(sheet_name, uploaded_df):
-    # 1. Normaliza nomes das colunas (remove espaços extras e deixa em maiúsculo para comparar)
-    uploaded_df.columns = [str(col).strip() for col in uploaded_df.columns]
-    
-    # 2. Se o cabeçalho não estiver na linha 1, tenta localizar a linha correta automaticamente
-    cols_upper = [c.upper() for c in uploaded_df.columns]
-    if "DIGITADOR" not in cols_upper and "REFERÊNCIA" not in cols_upper and "REFERENCIA" not in cols_upper:
-        header_row_idx = None
-        for idx, row in uploaded_df.head(10).iterrows():
-            row_values = [str(v).strip().upper() for v in row.values]
-            if "DIGITADOR" in row_values or "REFERÊNCIA" in row_values or "REFERENCIA" in row_values:
-                header_row_idx = idx
-                break
-        
-        if header_row_idx is not None:
-            # Reorganiza o DataFrame considerando a linha encontrada como o novo cabeçalho
-            new_headers = [str(v).strip() for v in uploaded_df.iloc[header_row_idx].values]
-            uploaded_df = uploaded_df.iloc[header_row_idx + 1:].copy()
-            uploaded_df.columns = new_headers
+def normalize_text(text: str) -> str:
+    """Remove acentos, espaços extras e converte para maiúsculo."""
+    text = str(text).strip()
+    # Normaliza unicode para separar acentos e remove-os
+    nfkd_form = unicodedata.normalize('NFKD', text)
+    only_ascii = "".join([c for c in nfkd_form if not unicodedata.combining(c)])
+    return only_ascii.upper()
 
-    # 3. Tratamento flexível para aceitar 'REFERÊNCIA' ou 'REFERENCIA' (com ou sem acento)
+def process_single_sheet_update(sheet_name, uploaded_df):
+    # 1. Limpa espaços invisíveis de todas as colunas
+    uploaded_df.columns = [str(col).strip() for col in uploaded_df.columns]
+
+    # 2. Mapeia colunas existentes para os nomes padrão esperados
     col_mapping = {}
     for col in uploaded_df.columns:
-        col_clean = str(col).strip()
-        if col_clean.upper() == "REFERENCIA":
-            col_mapping[col] = "REFERÊNCIA"
-        elif col_clean.upper() == "DIGITADOR":
+        norm_col = normalize_text(col)
+        if norm_col == "DIGITADOR":
             col_mapping[col] = "DIGITADOR"
-            
+        elif norm_col == "REFERENCIA":
+            col_mapping[col] = "REFERÊNCIA"
+
     uploaded_df = uploaded_df.rename(columns=col_mapping)
 
-    # 4. Validação das colunas obrigatórias
+    # 3. Validação das colunas obrigatórias
     req_cols = ["DIGITADOR", "REFERÊNCIA"]
     missing = [col for col in req_cols if col not in uploaded_df.columns]
+    
     if missing:
-        st.error(f"A planilha '{sheet_name}' precisa conter as colunas: {', '.join(missing)}. Colunas encontradas: {list(uploaded_df.columns)}")
+        st.error(
+            f"❌ A planilha '{sheet_name}' não possui as colunas necessárias: {', '.join(missing)}.\n\n"
+            f"**Colunas encontradas na linha 1:** {list(uploaded_df.columns)}"
+        )
         return False
 
+    # 4. Processamento dos dados
     uploaded_df = uploaded_df.fillna("-").astype(str)
     cache_path = os.path.join(DATA_DIR, f"cache_{sheet_name.lower().replace(' ', '_')}.csv")
 
@@ -174,7 +169,8 @@ def process_single_sheet_update(sheet_name, uploaded_df):
                         val_new = row_curr.get(col, "-")
 
                         if val_old != val_new:
-                            if col.upper() in ["STATUS", "SITUAÇÃO", "SITUACAO"]:
+                            col_norm = normalize_text(col)
+                            if col_norm in ["STATUS", "SITUACAO"]:
                                 acao = f"alterou o status de '{val_old}' para '{val_new}'"
                             else:
                                 acao = f"alterou o campo '{col}' de '{val_old}' para '{val_new}'"
