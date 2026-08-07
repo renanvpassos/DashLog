@@ -3,6 +3,7 @@ import re
 import json
 import time
 from datetime import datetime, date
+from zoneinfo import ZoneInfo
 import pandas as pd
 import streamlit as st
 from fpdf import FPDF
@@ -18,6 +19,13 @@ st.set_page_config(
     page_icon="📊",
     layout="wide"
 )
+
+# Fuso Horário do Brasil
+TZ_BR = ZoneInfo("America/Sao_Paulo")
+
+def get_now_br():
+    """Retorna o datetime atual formatado no fuso de Brasília."""
+    return datetime.now(TZ_BR)
 
 # ==========================================
 # CONVERSOR DE LINK (Google Sheets para CSV)
@@ -245,7 +253,7 @@ if not st.session_state.authenticated:
     st.stop()
 
 # ==========================================
-# PAINEL PRINCIPAL
+# PAINEL PRINCIPAL (FORMATO BR E HORÁRIO DE BRASÍLIA)
 # ==========================================
 st.title("📊 Monitor de Digitação em Tempo Real")
 
@@ -303,17 +311,28 @@ with col_info:
 
 st.divider()
 
-# --- CARREGAR LOGS E FILTRAGEM POR DATA ---
+# --- CARREGAR LOGS E FILTRAGEM POR DATA BRASILEIRA ---
 logs_all = load_logs()
+
+# Obter a data atual no fuso do Brasil
+hoje_br = get_now_br().date()
 
 st.subheader("📅 Seleção de Período de Análise")
 col_search, col_dt1, col_dt2 = st.columns([2, 1, 1])
 
 with col_dt1:
-    dt_inicio = st.date_input("Data Inicial", value=date.today())
+    dt_inicio = st.date_input(
+        "Data Inicial",
+        value=hoje_br,
+        format="DD/MM/YYYY"  # Formato Brasileiro
+    )
 
 with col_dt2:
-    dt_fim = st.date_input("Data Final", value=date.today())
+    dt_fim = st.date_input(
+        "Data Final",
+        value=hoje_br,
+        format="DD/MM/YYYY"  # Formato Brasileiro
+    )
 
 with col_search:
     search_query = st.text_input(
@@ -325,7 +344,13 @@ with col_search:
 logs_periodo = []
 for l in logs_all:
     try:
-        log_dt = datetime.strptime(l["date"], "%Y-%m-%d").date()
+        # Suporta tanto ano-mês-dia (salvo no JSON) quanto formato tratado
+        log_dt_str = l.get("date", "")
+        if "-" in log_dt_str:
+            log_dt = datetime.strptime(log_dt_str, "%Y-%m-%d").date()
+        else:
+            log_dt = datetime.strptime(log_dt_str, "%d/%m/%Y").date()
+
         if dt_inicio <= log_dt <= dt_fim:
             logs_periodo.append(l)
     except Exception:
@@ -379,7 +404,7 @@ st.divider()
 # --- LOG DE ATIVIDADES EM TEMPO REAL ---
 st.subheader("🪵 Log de Atividades dos Digitadores")
 
-# Filtragem Adicional por Texto (Barra de Pesquisa) sobre os logs do período
+# Filtragem Adicional por Texto (Barra de Pesquisa)
 filtered_logs = []
 for log in logs_periodo:
     matches_search = True
@@ -397,23 +422,41 @@ for log in logs_periodo:
 # Botão de Exportação de PDF
 if logs_periodo:
     try:
-        pdf_bytes = generate_pdf(logs_periodo, dt_inicio, dt_fim)
+        pdf_bytes = generate_pdf(
+            logs_periodo,
+            dt_inicio.strftime('%d/%m/%Y'),
+            dt_fim.strftime('%d/%m/%Y')
+        )
         st.download_button(
             label="📄 Extrair Relatório PDF (Período Selecionado)",
             data=bytes(pdf_bytes),
-            file_name=f"relatorio_digitacao_{dt_inicio}_{dt_fim}.pdf",
+            file_name=f"relatorio_digitacao_{dt_inicio.strftime('%d-%m-%Y')}_{dt_fim.strftime('%d-%m-%Y')}.pdf",
             mime="application/pdf"
         )
     except Exception as e:
         st.error(f"Erro ao gerar PDF: {e}")
 
-# Container de Logs
+# Container de Logs com Formatação PT-BR de Horário e Data
 st.markdown("**Histórico de Eventos:**")
 log_container = st.container(height=380, border=True)
 
 with log_container:
     if filtered_logs:
         for entry in filtered_logs:
-            st.markdown(f"`{entry['timestamp']}` — **{entry['mensagem']}**")
+            # Tratamento visual do timestamp para o padrão brasileiro (DD/MM/YYYY HH:MM:SS)
+            raw_ts = entry.get('timestamp', '')
+            ts_exibicao = raw_ts
+            try:
+                # Tenta converter timestamp padrão ISO/YYYY-MM-DD para exibição BR
+                if "T" in raw_ts or "-" in raw_ts[:10]:
+                    dt_obj = datetime.fromisoformat(raw_ts.replace("Z", "+00:00"))
+                    if dt_obj.tzinfo is None:
+                        dt_obj = dt_obj.replace(tzinfo=ZoneInfo("UTC"))
+                    dt_br = dt_obj.astimezone(TZ_BR)
+                    ts_exibicao = dt_br.strftime("%d/%m/%Y %H:%M:%S")
+            except Exception:
+                pass
+
+            st.markdown(f"`{ts_exibicao}` — **{entry['mensagem']}**")
     else:
         st.write("Nenhum registro encontrado para os filtros selecionados.")
