@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import time
 from datetime import datetime, date
 import pandas as pd
 import streamlit as st
@@ -222,15 +223,33 @@ with col_btn:
     if st.button("🔄 Sincronizar Planilhas", use_container_width=True, type="primary"):
         with st.spinner("Baixando dados e calculando alterações..."):
             sucessos = 0
+            
+            # Cabeçalhos HTTP para simular um navegador real e evitar erro 400 do Google
+            headers = {
+                'User-Agent': (
+                    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                    'AppleWebKit/537.36 (KHTML, like Gecko) '
+                    'Chrome/120.0.0.0 Safari/537.36'
+                )
+            }
+
             for name, url in LISTA_PLANILHAS.items():
                 try:
                     csv_url = convert_to_csv_url(url)
-                    df_dl = pd.read_csv(csv_url, dtype=str)
+                    
+                    # Leitura utilizando storage_options para enviar o User-Agent
+                    df_dl = pd.read_csv(csv_url, dtype=str, storage_options=headers)
+                    
                     if process_single_sheet_update(name, df_dl):
                         sucessos += 1
+
                 except Exception as e:
                     st.error(f"Erro ao baixar '{name}': {e}")
                     st.caption(f"URL gerada para download: `{convert_to_csv_url(url)}`")
+
+                # Pausa de 1 segundo para evitar chamadas simultâneas/atropeladas
+                time.sleep(1.0)
+
             if sucessos > 0:
                 st.success("Planilhas atualizadas com sucesso!")
                 st.rerun()
