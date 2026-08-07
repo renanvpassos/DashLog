@@ -108,10 +108,41 @@ def add_log_entry(sheet_name, digitador, referencia, acao):
 # LÓGICA DE COMPARAÇÃO E CACHE LOCAL
 # ==========================================
 def process_single_sheet_update(sheet_name, uploaded_df):
+    # 1. Normaliza nomes das colunas (remove espaços extras e deixa em maiúsculo para comparar)
+    uploaded_df.columns = [str(col).strip() for col in uploaded_df.columns]
+    
+    # 2. Se o cabeçalho não estiver na linha 1, tenta localizar a linha correta automaticamente
+    cols_upper = [c.upper() for c in uploaded_df.columns]
+    if "DIGITADOR" not in cols_upper and "REFERÊNCIA" not in cols_upper and "REFERENCIA" not in cols_upper:
+        header_row_idx = None
+        for idx, row in uploaded_df.head(10).iterrows():
+            row_values = [str(v).strip().upper() for v in row.values]
+            if "DIGITADOR" in row_values or "REFERÊNCIA" in row_values or "REFERENCIA" in row_values:
+                header_row_idx = idx
+                break
+        
+        if header_row_idx is not None:
+            # Reorganiza o DataFrame considerando a linha encontrada como o novo cabeçalho
+            new_headers = [str(v).strip() for v in uploaded_df.iloc[header_row_idx].values]
+            uploaded_df = uploaded_df.iloc[header_row_idx + 1:].copy()
+            uploaded_df.columns = new_headers
+
+    # 3. Tratamento flexível para aceitar 'REFERÊNCIA' ou 'REFERENCIA' (com ou sem acento)
+    col_mapping = {}
+    for col in uploaded_df.columns:
+        col_clean = str(col).strip()
+        if col_clean.upper() == "REFERENCIA":
+            col_mapping[col] = "REFERÊNCIA"
+        elif col_clean.upper() == "DIGITADOR":
+            col_mapping[col] = "DIGITADOR"
+            
+    uploaded_df = uploaded_df.rename(columns=col_mapping)
+
+    # 4. Validação das colunas obrigatórias
     req_cols = ["DIGITADOR", "REFERÊNCIA"]
     missing = [col for col in req_cols if col not in uploaded_df.columns]
     if missing:
-        st.error(f"A planilha '{sheet_name}' precisa conter as colunas: {', '.join(missing)}")
+        st.error(f"A planilha '{sheet_name}' precisa conter as colunas: {', '.join(missing)}. Colunas encontradas: {list(uploaded_df.columns)}")
         return False
 
     uploaded_df = uploaded_df.fillna("-").astype(str)
@@ -137,7 +168,6 @@ def process_single_sheet_update(sheet_name, uploaded_df):
 
                 digitador = str(row_curr.get("DIGITADOR", "")).strip()
 
-                # REGRA: Só registra no log se a coluna DIGITADOR estiver preenchida
                 if digitador and digitador not in ["-", "nan", "None"]:
                     for col in curr_indexed.columns:
                         val_old = row_prev.get(col, "-")
