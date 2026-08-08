@@ -4,11 +4,14 @@ on:
   schedule:
     # Executa a cada 10 minutos
     - cron: '*/10 * * * *'
-  workflow_dispatch:
+  workflow_dispatch: # Permite rodar manualmente para testar
 
 jobs:
   ping:
-    runs-runs-on: ubuntu-latest
+    runs-on: ubuntu-latest
     steps:
       - name: Ping Streamlit App
-        run: curl -s https://logmult.streamlit.app > /dev/null
+        run: |
+          curl -sSL --max-time 15 \
+            -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" \
+            "https://logmult.streamlit.app" > /dev/null || true
