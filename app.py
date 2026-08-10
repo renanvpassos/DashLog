@@ -143,10 +143,10 @@ def highlight_log_message(mensagem: str) -> str:
         r"para '<span style='color:#FF4B4B;font-weight:bold;'>\2</span>'",
         mensagem
     )
-    # Destaca a referência (tudo após "na Referência") em azul claro
+    # Destaca a referência em azul claro (funciona com ou sem o sufixo "| Importador:")
     mensagem = re.sub(
-        r"(na Referência )(.+)$",
-        r"\1<span style='color:#5DADE2;font-weight:bold;'>\2</span>",
+        r"(na Referência )(.+?)((?: \| Importador: .+)?)$",
+        r"\1<span style='color:#5DADE2;font-weight:bold;'>\2</span>\3",
         mensagem
     )
     return mensagem
@@ -161,6 +161,8 @@ def process_single_sheet_update(sheet_name, uploaded_df):
             new_columns.append("DIGITADOR")
         elif norm_col.startswith("REFERENCIA"):
             new_columns.append("REFERÊNCIA")
+        elif norm_col.startswith("IMPORTADOR"):
+            new_columns.append("IMPORTADOR")
         else:
             new_columns.append(col_str)
             
@@ -199,6 +201,10 @@ def process_single_sheet_update(sheet_name, uploaded_df):
                 digitador = str(row_curr.get("DIGITADOR", "")).strip()
 
                 if digitador and digitador not in ["-", "nan", "None"]:
+                    importador = str(row_curr.get("IMPORTADOR", "-")).strip()
+                    if importador in ["nan", "None", ""]:
+                        importador = "-"
+
                     for col in curr_indexed.columns:
                         val_old = row_prev.get(col, "-")
                         val_new = row_curr.get(col, "-")
@@ -216,7 +222,7 @@ def process_single_sheet_update(sheet_name, uploaded_df):
                                 "sheet_name": str(sheet_name),
                                 "digitador": str(digitador),
                                 "referencia": str(ref),
-                                "mensagem": f"[{sheet_name}] {digitador} {acao} na Referência {ref}"
+                                "mensagem": f"[{sheet_name}] {digitador} {acao} na Referência {ref} | Importador: {importador}"
                             })
 
         except Exception as e:
@@ -306,7 +312,10 @@ def build_pdf_segments(mensagem: str):
     destacar 'de/para' em vermelho e a Referência em azul no PDF.
     """
     segments = []
-    pattern = re.compile(r"de '([^']*)' para '([^']*)'|na Referência (.+)$")
+    pattern = re.compile(
+        r"de '([^']*)' para '([^']*)'"
+        r"|na Referência (.+?)(?: \| Importador: (.+))?$"
+    )
     pos = 0
 
     for m in pattern.finditer(mensagem):
@@ -323,6 +332,8 @@ def build_pdf_segments(mensagem: str):
         else:
             segments.append(("na Referência ", None))
             segments.append((m.group(3), PDF_BLUE))
+            if m.group(4):
+                segments.append((f" | Importador: {m.group(4)}", None))
 
         pos = end
 
