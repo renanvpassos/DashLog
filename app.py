@@ -29,7 +29,7 @@ st.set_page_config(
 )
 
 # ---------------------------------------------------------
-# AUTOMAÇÃO: Recarrega/Executa a cada 2 minutos (120.000ms)
+# AUTOMAÇÃO: Recarrega/Executa a cada 20 segundos (20.000ms)
 # ---------------------------------------------------------
 st_autorefresh(interval=20000, key="auto_sync_timer")
 
@@ -413,7 +413,7 @@ with st.spinner("Sincronizando planilhas em segundo plano..."):
 # PAINEL PRINCIPAL
 # ==========================================
 st.title("📊 Monitor Operacional em Tempo Real")
-st.caption(f"Monitorando **{len(LISTA_PLANILHAS)}** planilha(s) configurada(s). *(Atualizando e sincronizando automaticamente a cada 2 minutos)*")
+st.caption(f"Monitorando **{len(LISTA_PLANILHAS)}** planilha(s) configurada(s). *(Atenção: Atualiza automaticamente a cada 20 segundos)*")
 
 st.divider()
 
