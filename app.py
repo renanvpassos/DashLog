@@ -490,6 +490,15 @@ st.subheader("🪵 Log de Atividades dos Digitadores")
 # Filtragem Adicional por Texto
 filtered_logs = []
 for log in logs_periodo:
+    # 1. Ignora registros cuja coluna alterada seja 'DATA ATUALIZAÇÃO'
+    coluna_modificada = str(log.get("coluna", "")).strip().upper()
+    if coluna_modificada == "DATA ATUALIZAÇÃO":
+        continue
+
+    # Alternativa: se o nome da coluna fica dentro do texto da 'mensagem' ou 'referencia'
+    # if "DATA ATUALIZAÇÃO" in str(log.get("mensagem", "")).upper():
+    #     continue
+
     matches_search = True
     if search_query:
         q = search_query.lower()
@@ -527,7 +536,7 @@ with log_container:
     if filtered_logs:
         for entry in filtered_logs:
             msg_destacada = highlight_log_message(entry['mensagem'])
-            # Removido entry['timestamp'] da exibição na tela
-            st.markdown(f"**{msg_destacada}**", unsafe_allow_html=True)
+            # Mantida a exibição do horário do log/evento
+            st.markdown(f"`{entry['timestamp']}` — **{msg_destacada}**", unsafe_allow_html=True)
     else:
         st.write("Nenhum registro encontrado para os filtros selecionados.")
