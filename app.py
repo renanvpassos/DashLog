@@ -457,7 +457,11 @@ st.subheader(f"📈 Estatísticas no Período ({dt_inicio.strftime('%d/%m/%Y')} 
 
 if not df_logs_periodo.empty:
     col_m1, col_m2, col_m3 = st.columns(3)
-    col_m1.metric("Ações Registradas no Período", len(df_logs_periodo))
+    
+    # 🎯 CONTA APENAS AS REFERÊNCIAS ÚNICAS
+    total_referencias_unicas = df_logs_periodo["referencia"].nunique()
+    
+    col_m1.metric("Referências Editadas no Período", total_referencias_unicas)
     col_m2.metric("Digitadores Ativos", df_logs_periodo["digitador"].nunique())
     col_m3.metric("Planilhas com Atividade", df_logs_periodo["sheet_name"].nunique())
 
@@ -486,8 +490,6 @@ if not df_logs_periodo.empty:
                 st.bar_chart(df_sheet_logs["referencia"].value_counts().head(10))
 else:
     st.info("Nenhuma atividade registrada no período selecionado.")
-
-st.divider()
 
 # --- LOG DE ATIVIDADES EM TEMPO REAL ---
 st.subheader("🪵 Log de Atividades dos Digitadores")
