@@ -295,6 +295,42 @@ def sanitize_pdf_text(text: str) -> str:
     """Converte caracteres UTF-8 para um formato compatível com fontes padrão do FPDF."""
     return unicodedata.normalize('NFKD', str(text)).encode('latin-1', 'ignore').decode('latin-1')
 
+# Cores usadas no destaque do PDF (RGB)
+PDF_RED = (200, 30, 30)
+PDF_BLUE = (41, 128, 185)
+PDF_BLACK = (0, 0, 0)
+
+def build_pdf_segments(mensagem: str):
+    """
+    Quebra a mensagem em segmentos (texto, cor) para permitir
+    destacar 'de/para' em vermelho e a Referência em azul no PDF.
+    """
+    segments = []
+    pattern = re.compile(r"de '([^']*)' para '([^']*)'|na Referência (.+)$")
+    pos = 0
+
+    for m in pattern.finditer(mensagem):
+        start, end = m.span()
+        if start > pos:
+            segments.append((mensagem[pos:start], None))
+
+        if m.group(1) is not None:
+            segments.append(("de '", None))
+            segments.append((m.group(1), PDF_RED))
+            segments.append(("' para '", None))
+            segments.append((m.group(2), PDF_RED))
+            segments.append(("'", None))
+        else:
+            segments.append(("na Referência ", None))
+            segments.append((m.group(3), PDF_BLUE))
+
+        pos = end
+
+    if pos < len(mensagem):
+        segments.append((mensagem[pos:], None))
+
+    return segments
+
 def generate_pdf(logs_filtered, start_date, end_date):
     pdf = PDFReport()
     pdf.alias_nb_pages()
@@ -311,9 +347,16 @@ def generate_pdf(logs_filtered, start_date, end_date):
 
     pdf.set_font("Helvetica", "", 9)
     for item in logs_filtered:
-        texto = sanitize_pdf_text(f"[{item['timestamp']}] {item['mensagem']}")
-        pdf.multi_cell(0, 6, text=texto)
-        pdf.ln(1)
+        pdf.set_text_color(*PDF_BLACK)
+        pdf.write(6, sanitize_pdf_text(f"[{item['timestamp']}] "))
+
+        segments = build_pdf_segments(item['mensagem'])
+        for texto_seg, cor in segments:
+            pdf.set_text_color(*(cor if cor else PDF_BLACK))
+            pdf.write(6, sanitize_pdf_text(texto_seg))
+
+        pdf.set_text_color(*PDF_BLACK)
+        pdf.ln(8)
 
     return pdf.output()
 
