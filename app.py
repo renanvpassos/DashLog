@@ -206,11 +206,16 @@ def process_single_sheet_update(sheet_name, uploaded_df):
                         importador = "-"
 
                     for col in curr_indexed.columns:
+                        col_norm = normalize_text(col)
+
+                        # 🛑 TRAVA: Ignora alterações se a coluna for "DATA ATUALIZAÇÃO"
+                        if "DATA ATUALIZACAO" in col_norm or "DATA DA ATUALIZACAO" in col_norm:
+                            continue
+
                         val_old = row_prev.get(col, "-")
                         val_new = row_curr.get(col, "-")
 
                         if val_old != val_new:
-                            col_norm = normalize_text(col)
                             if col_norm in ["STATUS", "SITUACAO"]:
                                 acao = f"alterou o status de '{val_old}' para '{val_new}'"
                             else:
@@ -490,14 +495,9 @@ st.subheader("🪵 Log de Atividades dos Digitadores")
 # Filtragem Adicional por Texto
 filtered_logs = []
 for log in logs_periodo:
-    # 1. Ignora registros cuja coluna alterada seja 'DATA ATUALIZAÇÃO'
-    coluna_modificada = str(log.get("coluna", "")).strip().upper()
-    if coluna_modificada == "DATA ATUALIZAÇÃO":
+    # 🛑 Trava retroativa para logs já gravados na base de dados
+    if "alterou o campo 'DATA ATUALIZAÇÃO'" in log.get("mensagem", "") or "alterou o campo 'DATA ATUALIZACAO'" in log.get("mensagem", ""):
         continue
-
-    # Alternativa: se o nome da coluna fica dentro do texto da 'mensagem' ou 'referencia'
-    # if "DATA ATUALIZAÇÃO" in str(log.get("mensagem", "")).upper():
-    #     continue
 
     matches_search = True
     if search_query:
@@ -536,7 +536,6 @@ with log_container:
     if filtered_logs:
         for entry in filtered_logs:
             msg_destacada = highlight_log_message(entry['mensagem'])
-            # Mantida a exibição do horário do log/evento
             st.markdown(f"`{entry['timestamp']}` — **{msg_destacada}**", unsafe_allow_html=True)
     else:
         st.write("Nenhum registro encontrado para os filtros selecionados.")
