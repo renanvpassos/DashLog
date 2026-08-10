@@ -527,6 +527,7 @@ with log_container:
     if filtered_logs:
         for entry in filtered_logs:
             msg_destacada = highlight_log_message(entry['mensagem'])
-            st.markdown(f"`{entry['timestamp']}` — **{msg_destacada}**", unsafe_allow_html=True)
+            # Removido entry['timestamp'] da exibição na tela
+            st.markdown(f"**{msg_destacada}**", unsafe_allow_html=True)
     else:
         st.write("Nenhum registro encontrado para os filtros selecionados.")
