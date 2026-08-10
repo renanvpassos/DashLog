@@ -452,16 +452,48 @@ else:
 
 st.divider()
 
+# --- TRATAMENTO DOS LOGS E CRIAÇÃO DO DATAFRAME ---
+if logs_periodo:
+    # 1. Filtro retroativo de 'DATA ATUALIZAÇÃO'
+    logs_validos = [
+        log for log in logs_periodo 
+        if "alterou o campo 'DATA ATUALIZAÇÃO'" not in log.get("mensagem", "") 
+        and "alterou o campo 'DATA ATUALIZACAO'" not in log.get("mensagem", "")
+    ]
+    df_logs_periodo = pd.DataFrame(logs_validos)
+else:
+    df_logs_periodo = pd.DataFrame(columns=["timestamp", "date", "sheet_name", "digitador", "referencia", "mensagem"])
+
+# --- LÓGICA DE DEDUPLICAÇÃO POR JANELA DE 5 MINUTOS ---
+total_acoes_agrupadas = 0
+
+if not df_logs_periodo.empty:
+    # Converte timestamp para datetime real para comparar o tempo
+    df_logs_periodo["dt_temp"] = pd.to_datetime(df_logs_periodo["timestamp"], format="%d/%m/%Y %H:%M:%S")
+    
+    # Ordena cronologicamente por referência e data/hora
+    df_logs_periodo = df_logs_periodo.sort_values(by=["referencia", "dt_temp"])
+    
+    # Calcula a diferença de tempo em minutos para a alteração anterior da MESMA referência
+    df_logs_periodo["diff_minutos"] = (
+        df_logs_periodo.groupby("referencia")["dt_temp"].diff().dt.total_seconds() / 60.0
+    )
+    
+    # Considera uma NOVA AÇÃO se for a 1ª vez que a referência aparece (NaN) 
+    # ou se se passaram 5 minutos ou mais (> 5.0) desde a última alteração
+    df_logs_periodo["nova_acao"] = df_logs_periodo["diff_minutos"].isna() | (df_logs_periodo["diff_minutos"] >= 5.0)
+    
+    # O total de ações no período será a soma dessas 'novas ações'
+    total_acoes_agrupadas = int(df_logs_periodo["nova_acao"].sum())
+
 # --- ESTATÍSTICAS BASEADAS NO PERÍODO SELECIONADO ---
 st.subheader(f"📈 Estatísticas no Período ({dt_inicio.strftime('%d/%m/%Y')} a {dt_fim.strftime('%d/%m/%Y')})")
 
 if not df_logs_periodo.empty:
     col_m1, col_m2, col_m3 = st.columns(3)
     
-    # 🎯 SOMA TODAS AS OCORRÊNCIAS/AÇÕES DE REFERÊNCIAS (mesmo que seja o mesmo digitador na mesma ref)
-    total_acoes_referencias = df_logs_periodo["referencia"].count()
-    
-    col_m1.metric("Ações Registradas no Período", total_acoes_referencias)
+    # 🎯 Exibe o total agrupado por janela de 5 minutos
+    col_m1.metric("Ações Registradas no Período", total_acoes_agrupadas)
     col_m2.metric("Digitadores Ativos", df_logs_periodo["digitador"].nunique())
     col_m3.metric("Planilhas com Atividade", df_logs_periodo["sheet_name"].nunique())
 
