@@ -91,7 +91,7 @@ LISTA_PLANILHAS = {
     "PLANILHA HENKEL": "https://docs.google.com/spreadsheets/d/1iZ9CcRjNk_C3uAWRTYO1xMGyLzGKKWLTHPguxq4pHOE",
     "PLANILHA SCANIA": "https://docs.google.com/spreadsheets/d/1BJpKdZlGo13vxs_sJ-467_RJbP8BBbMpD89pxrkzCFM",
     "PLANILHA SIG COMBIBLOC": "https://docs.google.com/spreadsheets/d/1EjLNlp5-_vmRQ834JWIH0rGSqZre3MvNoiHF92RI2LQ",
-    "PLANILHA LI/LPCO": "https://docs.google.com/spreadsheets/d/12335GUBYHgby3V4Q5w8gM0whd9YhzmV3ainB7AF_Yz8/edit?usp=sharing",
+    "PLANILHA LI/LPCO": "https://docs.google.com/spreadsheets/d/12335GUBYHgby3V4Q5w8gM0whd9YhzmV3ainB7AF_Yz8",
 }
 
 DATA_DIR = "data"
