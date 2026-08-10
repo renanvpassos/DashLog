@@ -31,7 +31,7 @@ st.set_page_config(
 # ---------------------------------------------------------
 # AUTOMAÇÃO: Recarrega/Executa a cada 2 minutos (120.000ms)
 # ---------------------------------------------------------
-st_autorefresh(interval=120000, key="auto_sync_timer")
+st_autorefresh(interval=30000, key="auto_sync_timer")
 
 # ==========================================
 # CONEXÃO COM O SUPABASE
