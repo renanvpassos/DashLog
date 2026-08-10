@@ -134,6 +134,23 @@ def normalize_text(text: str) -> str:
     only_ascii = "".join([c for c in nfkd_form if not unicodedata.combining(c)])
     return only_ascii.upper()
 
+def highlight_log_message(mensagem: str) -> str:
+    """Aplica destaque de cores: valores alterados (vermelho) e referência (azul claro)."""
+    # Destaca os valores 'de' e 'para' em vermelho
+    mensagem = re.sub(
+        r"de '([^']*)' para '([^']*)'",
+        r"de '<span style='color:#FF4B4B;font-weight:bold;'>\1</span>' "
+        r"para '<span style='color:#FF4B4B;font-weight:bold;'>\2</span>'",
+        mensagem
+    )
+    # Destaca a referência (tudo após "na Referência") em azul claro
+    mensagem = re.sub(
+        r"(na Referência )(.+)$",
+        r"\1<span style='color:#5DADE2;font-weight:bold;'>\2</span>",
+        mensagem
+    )
+    return mensagem
+
 def process_single_sheet_update(sheet_name, uploaded_df):
     new_columns = []
     for col in uploaded_df.columns:
@@ -363,7 +380,7 @@ with col_dt2:
 with col_search:
     search_query = st.text_input(
         "🔍 Pesquisar no Log:",
-        placeholder="Nome do digitador ou número de referência..."
+        placeholder="Nome do digitador, importador ou referência..."
     )
 
 # Busca logs direto no banco do Supabase referente ao período
@@ -455,6 +472,7 @@ log_container = st.container(height=380, border=True)
 with log_container:
     if filtered_logs:
         for entry in filtered_logs:
-            st.markdown(f"`{entry['timestamp']}` — **{entry['mensagem']}**")
+            msg_destacada = highlight_log_message(entry['mensagem'])
+            st.markdown(f"`{entry['timestamp']}` — **{msg_destacada}**", unsafe_allow_html=True)
     else:
         st.write("Nenhum registro encontrado para os filtros selecionados.")
