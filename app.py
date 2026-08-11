@@ -382,7 +382,7 @@ with st.spinner("Sincronizando planilhas em segundo plano..."):
 # ==========================================
 # PAINEL PRINCIPAL COM LOGO NO CANTO SUPERIOR DIREITO
 # ==========================================
-col_titulo, col_logo = st.columns([0.8, 0.2], vertical_alignment="center")
+col_titulo, col_logo = st.columns([0.3, 0.1], vertical_alignment="center")
 
 with col_titulo:
     st.title("📊 Monitor Operacional em Tempo Real")
