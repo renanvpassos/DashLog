@@ -156,6 +156,13 @@ def highlight_log_message(mensagem: str) -> str:
     return mensagem
 
 def process_single_sheet_update(sheet_name, uploaded_df):
+    """
+    Processa o DataFrame lido da aba 'LOG'.
+    Retorna uma tupla (sucesso: bool, mensagem_erro: str | None).
+    NÃO chama st.* aqui dentro, pois esta função roda em threads
+    do ThreadPoolExecutor e o Streamlit não permite atualizar a UI
+    fora da thread principal (o erro seria engolido silenciosamente).
+    """
     new_columns = []
     for col in uploaded_df.columns:
         col_str = str(col).strip()
@@ -176,11 +183,12 @@ def process_single_sheet_update(sheet_name, uploaded_df):
     missing = [col for col in req_cols if col not in uploaded_df.columns]
     
     if missing:
-        st.error(
+        erro = (
             f"❌ A aba 'LOG' da planilha '{sheet_name}' não possui as colunas necessárias: {', '.join(missing)}.\n\n"
-            f"**Colunas encontradas:** {list(uploaded_df.columns)}"
+            f"**Colunas encontradas na aba 'LOG':** {list(uploaded_df.columns)}\n\n"
+            f"**Linhas lidas:** {len(uploaded_df)}"
         )
-        return False
+        return False, erro
 
     uploaded_df = uploaded_df.fillna("-").astype(str)
     uploaded_df = uploaded_df.drop_duplicates(subset=["REFERÊNCIA"], keep="last")
@@ -188,6 +196,7 @@ def process_single_sheet_update(sheet_name, uploaded_df):
     cache_path = os.path.join(DATA_DIR, f"cache_{sheet_name.lower().replace(' ', '_')}.csv")
     new_logs = []
     now_br = get_now_br()
+    warning_msg = None
 
     if os.path.exists(cache_path):
         try:
@@ -235,13 +244,13 @@ def process_single_sheet_update(sheet_name, uploaded_df):
                             })
 
         except Exception as e:
-            st.warning(f"Erro ao comparar alterações da planilha '{sheet_name}': {e}")
+            warning_msg = f"⚠️ Erro ao comparar alterações da planilha '{sheet_name}': {e}"
 
     if new_logs:
         add_log_entries_bulk(new_logs)
 
     uploaded_df.to_csv(cache_path, index=False)
-    return True
+    return True, warning_msg
 
 def fetch_and_process_sheet(name, url, headers):
     """Função auxiliar para download e processamento concorrente. Lê exclusivamente a aba 'LOG'."""
@@ -250,9 +259,22 @@ def fetch_and_process_sheet(name, url, headers):
         response = requests.get(csv_url, headers=headers, timeout=15)
         
         if response.status_code == 200:
+            # 🔎 Detecta o caso em que o Google retorna 200 mas o corpo é uma
+            # página de erro HTML (ex.: aba inexistente tratada de forma "soft"),
+            # em vez de um CSV de verdade.
+            corpo = response.text.strip()
+            if corpo.startswith("<") or "google-viz-error" in corpo.lower():
+                return False, (
+                    f"❌ **'{name}'**: a resposta para a aba '{NOME_ABA_LOG}' não é um CSV válido "
+                    f"(o Google retornou uma página de erro). Confirme se a aba '{NOME_ABA_LOG}' existe "
+                    f"exatamente com esse nome nesta planilha."
+                )
+
             df_dl = pd.read_csv(io.StringIO(response.text), dtype=str)
-            if process_single_sheet_update(name, df_dl):
-                return True, None
+            success, msg = process_single_sheet_update(name, df_dl)
+            if success:
+                return True, msg  # msg pode ser um warning não-fatal (ou None)
+            return False, msg
         elif response.status_code == 400:
             return False, (
                 f"❌ **Erro 400 na '{name}'**: A aba '{NOME_ABA_LOG}' não foi encontrada nesta planilha "
@@ -263,9 +285,7 @@ def fetch_and_process_sheet(name, url, headers):
         else:
             return False, f"❌ Erro HTTP {response.status_code} na planilha '{name}'."
     except Exception as e:
-        return False, f"Erro inesperado ao processar '{name}': {e}"
-    
-    return False, f"Falha desconhecida ao baixar '{name}'."
+        return False, f"❌ Erro inesperado ao processar '{name}': {e}"
 
 def executar_sincronizacao():
     """Executa a sincronização de todas as planilhas, lendo apenas a aba 'LOG' de cada uma."""
