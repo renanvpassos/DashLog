@@ -456,19 +456,19 @@ if not df_logs_periodo.empty:
 
 # --- LÓGICA DE CÁLCULO DE AÇÕES AGRUPADAS (< 2 MINUTOS POR DIGITADOR) ---
 if not df_logs_periodo.empty:
-    # 1. Garantir ordenação por digitador e horário
-    df_sorted = df_logs_periodo.sort_values(by=["digitador", "data_hora"]).copy()
+    # 1. Ordenação por digitador e pela coluna DATA ATUALIZAÇÃO
+    df_sorted = df_logs_periodo.sort_values(by=["digitador", "DATA ATUALIZAÇÃO"]).copy()
     
-    # 2. Converter coluna para datetime (se já não estiver)
-    df_sorted["data_hora"] = pd.to_datetime(df_sorted["data_hora"])
+    # 2. Converter a coluna DATA ATUALIZAÇÃO para datetime
+    df_sorted["DATA ATUALIZAÇÃO"] = pd.to_datetime(df_sorted["DATA ATUALIZAÇÃO"])
     
     # 3. Calcular a diferença de tempo entre ações consecutivas do mesmo digitador
-    df_sorted["diff_tempo"] = df_sorted.groupby("digitador")["data_hora"].diff()
+    df_sorted["diff_tempo"] = df_sorted.groupby("digitador")["DATA ATUALIZAÇÃO"].diff()
     
     # 4. Considera "nova ação" se for a primeira do digitador (NaT) ou se o intervalo for > 2 minutos (120 seg)
     df_sorted["nova_acao"] = df_sorted["diff_tempo"].isna() | (df_sorted["diff_tempo"].dt.total_seconds() > 120)
     
-    # 5. Total de ações considerando o agrupamento por tempo
+    # 5. Total de ações agrupadas no período
     total_acoes_agrupadas = df_sorted["nova_acao"].sum()
 else:
     total_acoes_agrupadas = 0
