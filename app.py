@@ -129,7 +129,7 @@ def normalize_text(text: str) -> str:
     return only_ascii.upper()
 
 def highlight_log_message(mensagem: str) -> str:
-    """Aplica destaque de cores: valores alterados (vermelho) e referência (azul claro)."""
+    """Aplica destaque de cores nos campos da mensagem de log."""
     mensagem = re.sub(
         r"de '([^']*)' para '([^']*)'",
         r"de '<span style='color:#FF4B4B;font-weight:bold;'>\1</span>' "
@@ -144,33 +144,34 @@ def highlight_log_message(mensagem: str) -> str:
     return mensagem
 
 def process_single_sheet_update(sheet_name, uploaded_df):
-    """Processa o DataFrame lido da aba 'LOG' e gera novos registros de alteração."""
+    """Processa a aba 'LOG' e lê as colunas: REFERÊNCIA, IMPORTADOR, DIGITADOR, DATA ATUALIZACAO e OBSERVAÇÃO."""
     new_columns = []
     for col in uploaded_df.columns:
         col_str = str(col).strip()
         norm_col = normalize_text(col_str)
         
-        if norm_col.startswith("DIGITADOR"):
-            new_columns.append("DIGITADOR")
-        elif norm_col.startswith("REFERÊNCIA"):
+        if norm_col.startswith("REFERENCIA"):
             new_columns.append("REFERÊNCIA")
         elif norm_col.startswith("IMPORTADOR"):
             new_columns.append("IMPORTADOR")
-        elif norm_col.startswith("OBSERVAÇÃO"):
+        elif norm_col.startswith("DIGITADOR"):
+            new_columns.append("DIGITADOR")
+        elif "DATA" in norm_col and "ATUALIZ" in norm_col:
+            new_columns.append("DATA ATUALIZAÇÃO")
+        elif norm_col.startswith("OBSERVACAO"):
             new_columns.append("OBSERVAÇÃO")
         else:
             new_columns.append(col_str)
             
     uploaded_df.columns = new_columns
 
-    req_cols = ["DIGITADOR", "REFERÊNCIA"]
+    req_cols = ["REFERÊNCIA", "IMPORTADOR", "DIGITADOR", "DATA ATUALIZAÇÃO", "OBSERVAÇÃO"]
     missing = [col for col in req_cols if col not in uploaded_df.columns]
     
     if missing:
         erro = (
             f"❌ A aba 'LOG' da planilha '{sheet_name}' não possui as colunas necessárias: {', '.join(missing)}.\n\n"
-            f"**Colunas encontradas na aba 'LOG':** {list(uploaded_df.columns)}\n\n"
-            f"**Linhas lidas:** {len(uploaded_df)}"
+            f"**Colunas encontradas:** {list(uploaded_df.columns)}"
         )
         return False, erro
 
@@ -202,8 +203,20 @@ def process_single_sheet_update(sheet_name, uploaded_df):
                     if importador in ["nan", "None", ""]:
                         importador = "-"
 
+                    data_atualizacao = str(row_curr.get("DATA ATUALIZAÇÃO", "-")).strip()
+                    if data_atualizacao in ["nan", "None", ""]:
+                        data_atualizacao = "-"
+
+                    observacao = str(row_curr.get("OBSERVAÇÃO", "-")).strip()
+                    if observacao in ["nan", "None", ""]:
+                        observacao = "-"
+
                     for col in curr_indexed.columns:
                         col_norm = normalize_text(col)
+
+                        # Ignoramos alterações diretas da própria data de atualização para evitar logs duplicados
+                        if col_norm in ["DATA ATUALIZACAO", "DATA ATUALIZAÇÃO"]:
+                            continue
 
                         val_old = row_prev.get(col, "-")
                         val_new = row_curr.get(col, "-")
@@ -214,13 +227,19 @@ def process_single_sheet_update(sheet_name, uploaded_df):
                             else:
                                 acao = f"alterou o campo '{col}' de '{val_old}' para '{val_new}'"
                             
+                            # Formatação incluindo a Data de Atualização à esquerda da Observação
+                            msg_log = (
+                                f"[{sheet_name}] {digitador} {acao} na Referência {ref} | "
+                                f"Importador: {importador} | Data Atualização: {data_atualizacao} | Obs: {observacao}"
+                            )
+
                             new_logs.append({
                                 "timestamp": now_br.strftime("%d/%m/%Y %H:%M:%S"),
                                 "date": now_br.strftime("%Y-%m-%d"),
                                 "sheet_name": str(sheet_name),
                                 "digitador": str(digitador),
                                 "referencia": str(ref),
-                                "mensagem": f"[{sheet_name}] {digitador} {acao} na Referência {ref} | Importador: {importador}"
+                                "mensagem": msg_log
                             })
 
         except Exception as e:
@@ -314,7 +333,7 @@ PDF_BLUE = (41, 128, 185)
 PDF_BLACK = (0, 0, 0)
 
 def build_pdf_segments(mensagem: str):
-    """Quebra a mensagem em segmentos (texto, cor) para destacar no PDF."""
+    """Quebra a mensagem em segmentos para aplicar cores no PDF."""
     segments = []
     pattern = re.compile(
         r"de '([^']*)' para '([^']*)'"
@@ -452,17 +471,6 @@ else:
 st.divider()
 
 # --- TRATAMENTO DOS LOGS E CRIAÇÃO DO DATAFRAME ---
-if logs_periodo:
-    # Filtro retroativo de 'DATA ATUALIZAÇÃO'
-    logs_validos = [
-        log for log in logs_periodo 
-        if "alterou o campo 'DATA ATUALIZAÇÃO'" not in log.get("mensagem", "") 
-        and "alterou o campo 'DATA ATUALIZACAO'" not in log.get("mensagem", "")
-    ]
-    df_logs_periodo = pd.DataFrame(logs_validos)
-else:
-    df_logs_periodo = pd.DataFrame(columns=["timestamp", "date", "sheet_name", "digitador", "referencia", "mensagem"])
-
 # --- LÓGICA DE DEDUPLICAÇÃO POR JANELA DE 5 MINUTOS ---
 total_acoes_agrupadas = 0
 
@@ -518,9 +526,6 @@ st.subheader("🪵 Log de Atividades dos Digitadores")
 
 filtered_logs = []
 for log in logs_periodo:
-    if "alterou o campo 'DATA ATUALIZAÇÃO'" in log.get("mensagem", "") or "alterou o campo 'DATA ATUALIZACAO'" in log.get("mensagem", ""):
-        continue
-
     matches_search = True
     if search_query:
         q = search_query.lower()
