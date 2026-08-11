@@ -60,10 +60,10 @@ def extract_spreadsheet_id(url: str) -> str:
     match = re.search(r"/d/([a-zA-Z0-9-_]+)", url)
     return match.group(1) if match else None
 
-def convert_to_csv_url_by_gid(url: str, gid: str) -> str:
+def convert_to_csv_url(url: str, gid: str = "0") -> str:
     """
-    Converte a URL do Google Sheets para exportação direta via GID,
-    permitindo a leitura de abas ocultas.
+    Converte a URL do Google Sheets para o formato de exportação direta CSV
+    usando o GID numérico da aba, o que permite a leitura de abas ocultas.
     """
     sheet_id = extract_spreadsheet_id(url)
     if not sheet_id:
@@ -249,19 +249,21 @@ def process_single_sheet_update(sheet_name, uploaded_df):
     uploaded_df.to_csv(cache_path, index=False)
     return True, warning_msg
 
-def fetch_and_process_sheet(name, url, headers):
-    """Função auxiliar para download e processamento concorrente. Lê exclusivamente a aba 'LOG'."""
+def fetch_and_process_sheet(name, sheet_info, headers):
+    """Função auxiliar para download e processamento concorrente."""
     try:
-        csv_url = convert_to_csv_url(url)
+        url = sheet_info["url"] if isinstance(sheet_info, dict) else sheet_info
+        gid = sheet_info.get("gid", "0") if isinstance(sheet_info, dict) else "0"
+
+        csv_url = convert_to_csv_url(url, gid=gid)
         response = requests.get(csv_url, headers=headers, timeout=15)
         
-        # Se a aba estiver oculta, o Google pode responder com erro 400 ou página HTML
         if response.status_code == 200:
             corpo = response.text.strip()
             if corpo.startswith("<") or "google-viz-error" in corpo.lower():
                 return False, (
-                    f"❌ **'{name}'**: Não foi possível ler a aba '{NOME_ABA_LOG}'. "
-                    f"Verifique se a aba não está **oculta** ou com o nome incorreto."
+                    f"❌ **'{name}'**: A resposta retornada não é um CSV válido. "
+                    f"Confirme se o GID informado para a aba '{NOME_ABA_LOG}' está correto."
                 )
 
             df_dl = pd.read_csv(io.StringIO(response.text), dtype=str)
@@ -270,19 +272,16 @@ def fetch_and_process_sheet(name, url, headers):
                 return True, msg
             return False, msg
         elif response.status_code in (400, 404):
-            return False, (
-                f"❌ **Erro na '{name}'**: A aba '{NOME_ABA_LOG}' não foi encontrada "
-                f"ou está oculta."
-            )
+            return False, f"❌ **Erro na '{name}'**: Aba ou planilha não encontrada."
         elif response.status_code == 403:
-            return False, f"❌ **Erro 403 na '{name}'**: Acesso negado. Verifique o compartilhamento."
+            return False, f"❌ **Erro 403 na '{name}'**: Acesso negado. Verifique as permissões."
         else:
             return False, f"❌ Erro HTTP {response.status_code} na planilha '{name}'."
     except Exception as e:
         return False, f"❌ Erro inesperado ao processar '{name}': {e}"
 
 def executar_sincronizacao():
-    """Executa a sincronização de todas as planilhas, lendo apenas a aba 'LOG' de cada uma."""
+    """Executa a sincronização de todas as planilhas."""
     sucessos = 0
     headers = {
         'User-Agent': (
@@ -294,8 +293,63 @@ def executar_sincronizacao():
 
     with ThreadPoolExecutor(max_workers=5) as executor:
         futures = [
-            executor.submit(fetch_and_process_sheet, name, url, headers)
-            for name, url in LISTA_PLANILHAS.items()
+            executor.submit(fetch_and_process_sheet, name, info, headers)
+            for name, info in LISTA_PLANILHAS.items()
+        ]
+
+        for future in as_completed(futures):
+            success, err_msg = future.result()
+            if success:
+                sucessos += 1
+            elif err_msg:
+                st.error(err_msg)
+
+    return sucessosdef fetch_and_process_sheet(name, sheet_info, headers):
+    """Função auxiliar para download e processamento concorrente."""
+    try:
+        url = sheet_info["url"] if isinstance(sheet_info, dict) else sheet_info
+        gid = sheet_info.get("gid", "0") if isinstance(sheet_info, dict) else "0"
+
+        csv_url = convert_to_csv_url(url, gid=gid)
+        response = requests.get(csv_url, headers=headers, timeout=15)
+        
+        if response.status_code == 200:
+            corpo = response.text.strip()
+            if corpo.startswith("<") or "google-viz-error" in corpo.lower():
+                return False, (
+                    f"❌ **'{name}'**: A resposta retornada não é um CSV válido. "
+                    f"Confirme se o GID informado para a aba '{NOME_ABA_LOG}' está correto."
+                )
+
+            df_dl = pd.read_csv(io.StringIO(response.text), dtype=str)
+            success, msg = process_single_sheet_update(name, df_dl)
+            if success:
+                return True, msg
+            return False, msg
+        elif response.status_code in (400, 404):
+            return False, f"❌ **Erro na '{name}'**: Aba ou planilha não encontrada."
+        elif response.status_code == 403:
+            return False, f"❌ **Erro 403 na '{name}'**: Acesso negado. Verifique as permissões."
+        else:
+            return False, f"❌ Erro HTTP {response.status_code} na planilha '{name}'."
+    except Exception as e:
+        return False, f"❌ Erro inesperado ao processar '{name}': {e}"
+
+def executar_sincronizacao():
+    """Executa a sincronização de todas as planilhas."""
+    sucessos = 0
+    headers = {
+        'User-Agent': (
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+            'AppleWebKit/537.36 (KHTML, like Gecko) '
+            'Chrome/120.0.0.0 Safari/537.36'
+        )
+    }
+
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        futures = [
+            executor.submit(fetch_and_process_sheet, name, info, headers)
+            for name, info in LISTA_PLANILHAS.items()
         ]
 
         for future in as_completed(futures):
