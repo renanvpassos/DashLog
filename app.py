@@ -50,26 +50,29 @@ supabase = init_supabase()
 # ==========================================
 # CONVERSOR DE LINK (Google Sheets para GViz CSV)
 # ==========================================
+# 🎯 Nome fixo da aba de onde TODOS os dados devem ser extraídos.
+# Todas as planilhas cadastradas em LISTA_PLANILHAS devem possuir
+# uma aba com exatamente este nome.
+NOME_ABA_LOG = "LOG"
+
 def extract_spreadsheet_id(url: str) -> str:
     """Extrai o ID da planilha do Google Sheets."""
     match = re.search(r"/d/([a-zA-Z0-9-_]+)", url)
     return match.group(1) if match else None
 
-def convert_to_csv_url(url: str) -> str:
+def convert_to_csv_url(url: str, sheet_name: str = NOME_ABA_LOG) -> str:
     """
-    Converte URLs do Google Sheets para o formato GViz CSV.
-    Se houver 'gid' na URL, utiliza. Se não houver, baixa a primeira aba.
+    Converte URLs do Google Sheets para o formato GViz CSV, apontando
+    diretamente para a aba pelo NOME (não mais pelo gid).
+
+    Isso garante que, independentemente de quantas abas a planilha tenha,
+    os dados sejam sempre lidos exclusivamente da aba 'LOG'.
     """
     sheet_id = extract_spreadsheet_id(url)
     if not sheet_id:
         return url
 
-    gid_match = re.search(r"[#&?]gid=([0-9]+)", url)
-    if gid_match:
-        gid = gid_match.group(1)
-        return f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&gid={gid}"
-    else:
-        return f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv"
+    return f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={sheet_name}"
 
 # ==========================================
 # LINKS DAS PLANILHAS FIXOS NO CÓDIGO
@@ -174,7 +177,7 @@ def process_single_sheet_update(sheet_name, uploaded_df):
     
     if missing:
         st.error(
-            f"❌ A planilha '{sheet_name}' não possui as colunas necessárias: {', '.join(missing)}.\n\n"
+            f"❌ A aba 'LOG' da planilha '{sheet_name}' não possui as colunas necessárias: {', '.join(missing)}.\n\n"
             f"**Colunas encontradas:** {list(uploaded_df.columns)}"
         )
         return False
@@ -241,7 +244,7 @@ def process_single_sheet_update(sheet_name, uploaded_df):
     return True
 
 def fetch_and_process_sheet(name, url, headers):
-    """Função auxiliar para download e processamento concorrente."""
+    """Função auxiliar para download e processamento concorrente. Lê exclusivamente a aba 'LOG'."""
     try:
         csv_url = convert_to_csv_url(url)
         response = requests.get(csv_url, headers=headers, timeout=15)
@@ -251,7 +254,10 @@ def fetch_and_process_sheet(name, url, headers):
             if process_single_sheet_update(name, df_dl):
                 return True, None
         elif response.status_code == 400:
-            return False, f"❌ **Erro 400 na '{name}'**: A aba (gid) informada não existe ou está corrompida."
+            return False, (
+                f"❌ **Erro 400 na '{name}'**: A aba '{NOME_ABA_LOG}' não foi encontrada nesta planilha "
+                f"(ou o nome está diferente/com erro de digitação). Verifique se existe uma aba chamada exatamente '{NOME_ABA_LOG}'."
+            )
         elif response.status_code == 403:
             return False, f"❌ **Erro 403 na '{name}'**: Acesso negado. Verifique as permissões de compartilhamento."
         else:
@@ -262,7 +268,7 @@ def fetch_and_process_sheet(name, url, headers):
     return False, f"Falha desconhecida ao baixar '{name}'."
 
 def executar_sincronizacao():
-    """Executa a sincronização de todas as planilhas."""
+    """Executa a sincronização de todas as planilhas, lendo apenas a aba 'LOG' de cada uma."""
     sucessos = 0
     headers = {
         'User-Agent': (
@@ -413,7 +419,7 @@ with st.spinner("Sincronizando planilhas em segundo plano..."):
 # PAINEL PRINCIPAL
 # ==========================================
 st.title("📊 Monitor Operacional em Tempo Real")
-st.caption(f"Monitorando **{len(LISTA_PLANILHAS)}** planilha(s) configurada(s). *(Atenção: Atualiza automaticamente a cada 20 segundos)*")
+st.caption(f"Monitorando **{len(LISTA_PLANILHAS)}** planilha(s) configurada(s) — dados lidos da aba **'{NOME_ABA_LOG}'**. *(Atenção: Atualiza automaticamente a cada 20 segundos)*")
 
 st.divider()
 
