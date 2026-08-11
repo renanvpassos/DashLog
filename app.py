@@ -518,24 +518,23 @@ else:
 st.markdown("**Histórico de Eventos:**")
 log_container = st.container(height=380, border=True)
 
-# 1. Aplica o filtro da barra de pesquisa sobre os logs do período
+# 1. Aplica o filtro da barra de pesquisa (search_query) sobre os logs do período
 filtered_logs = []
 if logs_periodo:
     if search_query.strip():
         term = search_query.strip().lower()
         for log in logs_periodo:
+            # Busca o termo na mensagem ou nos campos individuais
             msg = str(log.get("mensagem", "")).lower()
             digitador = str(log.get("digitador", "")).lower()
             referencia = str(log.get("referencia", "")).lower()
             sheet = str(log.get("sheet_name", "")).lower()
-            acao = str(log.get("acao", "")).lower()
 
             if (
                 term in msg
                 or term in digitador
                 or term in referencia
                 or term in sheet
-                or term in acao
             ):
                 filtered_logs.append(log)
     else:
@@ -544,14 +543,15 @@ if logs_periodo:
 
 # 2. Função auxiliar para extrair e converter a data da mensagem/timestamp
 def obter_data_log(entry):
+    # Tenta obter pelo timestamp cadastrado
     timestamp_str = entry.get("timestamp", "")
-    if timestamp_str:
-        try:
-            return datetime.strptime(str(timestamp_str), "%d/%m/%Y %H:%M:%S")
-        except Exception:
-            pass
+    try:
+        return datetime.strptime(timestamp_str, "%d/%m/%Y %H:%M:%S")
+    except Exception:
+        pass
 
-    msg = str(entry.get("mensagem", ""))
+    # Caso falhe, tenta extrair via Regex do texto da mensagem
+    msg = entry.get("mensagem", "")
     match = re.search(r"^(\d{2}/\d{2}/\d{4}\s\d{2}:\d{2}:\d{2})", msg)
     if match:
         try:
@@ -575,40 +575,11 @@ with log_container:
         for entry in logs_ordenados:
             mensagem = entry.get("mensagem", "")
 
-            # FALLBACK: Se não houver a string 'mensagem' pronta, constrói a partir dos campos preenchidos no dict
-            if not mensagem.strip():
-                ts = entry.get("timestamp", "")
-                acao = entry.get("acao", "")
-                ref = entry.get("referencia", "")
-                dig = entry.get("digitador", "")
-
-                partes = []
-                if ts:
-                    partes.append(f"{ts}")
-                if acao:
-                    partes.append(f"Ação: {acao}")
-                if ref:
-                    partes.append(f"— Referência: {ref}")
-                if dig:
-                    partes.append(f"(por {dig})")
-
-                mensagem = " ".join(partes)
-
-            # Aplicação das formatações visuais
-            mensagem_formatada = mensagem
-
-            # Destaca a data/hora no início
+            # Destaca a data/hora no início da string (Ex: 11/08/2026 14:30:00)
             mensagem_formatada = re.sub(
                 r"^(\d{2}/\d{2}/\d{4}\s\d{2}:\d{2}:\d{2})",
                 r"<span style='color: #008000 !important; background-color: #e0e0e0; padding: 3px 8px; border-radius: 4px; font-weight: bold; display: inline-block;'>\1</span>",
-                mensagem_formatada,
-            )
-
-            # Destaca Ação e Referência (suporta com ou sem o traço '—')
-            mensagem_formatada = re.sub(
-                r"Ação:\s*(.*?)(?:\s*—\s*|\s+)Referência:\s*(.*)$",
-                r"<span style='color: red; font-weight: bold;'>Ação:</span> \1 — Referência: <span style='color: #1E90FF; font-weight: bold;'>\2</span>",
-                mensagem_formatada,
+                mensagem,
             )
 
             # Destaca palavras "de" e "para"
@@ -617,6 +588,13 @@ with log_container:
             )
             mensagem_formatada = re.sub(
                 r"\b(para)\b", r"**\1**", mensagem_formatada, flags=re.IGNORECASE
+            )
+
+            # Destaca Ação e Referência
+            mensagem_formatada = re.sub(
+                r"Ação:\s*(.*?)\s*—\s*Referência:\s*(.*)$",
+                r"<span style='color: red; font-weight: bold;'>Ação:</span> \1 — Referência: <span style='color: #1E90FF; font-weight: bold;'>\2</span>",
+                mensagem_formatada,
             )
 
             st.markdown(mensagem_formatada, unsafe_allow_html=True)
