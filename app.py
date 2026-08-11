@@ -359,7 +359,39 @@ def executar_sincronizacao():
             elif err_msg:
                 st.error(err_msg)
 
-    return sucessos
+    return sucessos  # 👈 A quebra de linha deve vir imediatamente aqui
+
+
+def fetch_and_process_sheet(name, sheet_info, headers):
+    """Função auxiliar para download e processamento concorrente."""
+    try:
+        url = sheet_info["url"] if isinstance(sheet_info, dict) else sheet_info
+        gid = sheet_info.get("gid", "0") if isinstance(sheet_info, dict) else "0"
+
+        csv_url = convert_to_csv_url(url, gid=gid)
+        response = requests.get(csv_url, headers=headers, timeout=15)
+        
+        if response.status_code == 200:
+            corpo = response.text.strip()
+            if corpo.startswith("<") or "google-viz-error" in corpo.lower():
+                return False, (
+                    f"❌ **'{name}'**: A resposta retornada não é um CSV válido. "
+                    f"Confirme se o GID informado para a aba '{NOME_ABA_LOG}' está correto."
+                )
+
+            df_dl = pd.read_csv(io.StringIO(response.text), dtype=str)
+            success, msg = process_single_sheet_update(name, df_dl)
+            if success:
+                return True, msg
+            return False, msg
+        elif response.status_code in (400, 404):
+            return False, f"❌ **Erro na '{name}'**: Aba ou planilha não encontrada."
+        elif response.status_code == 403:
+            return False, f"❌ **Erro 403 na '{name}'**: Acesso negado. Verifique as permissões."
+        else:
+            return False, f"❌ Erro HTTP {response.status_code} na planilha '{name}'."
+    except Exception as e:
+        return False, f"❌ Erro inesperado ao processar '{name}': {e}"
 
 # ==========================================
 # RELATÓRIO PDF (SUPORTE MULTIBYTE / LATIN-1 SAFE)
