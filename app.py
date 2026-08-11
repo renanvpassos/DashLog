@@ -528,27 +528,26 @@ log_container = st.container(height=380, border=True)
 with log_container:
     if filtered_logs:
         for entry in filtered_logs:
-            data_hora = entry.get('data_hora', '')  # Altere para a chave correta da data/hora no seu dict
             mensagem = entry.get('mensagem', '')
 
-            # Formatação da data e hora em verde com fundo cinza claro
-            tag_data_hora = (
-                f"<span style='color: #2e7d32; background-color: #f0f2f6; "
-                f"padding: 2px 6px; border-radius: 4px; font-weight: bold;'>{data_hora}</span>"
+            # Destaca a data/hora no início da string (Ex: 11/08/2026 14:30:00)
+            mensagem_formatada = re.sub(
+                r"^(\d{2}/\d{2}/\d{4}\s\d{2}:\d{2}:\d{2})",
+                r"<span style='color: #008000 !important; background-color: #e0e0e0; padding: 3px 8px; border-radius: 4px; font-weight: bold; display: inline-block;'>\1</span>",
+                mensagem
             )
 
-            # Destaca em negrito as palavras "de" e "para"
-            mensagem_formatada = re.sub(r'\b(de)\b', r'**\1**', mensagem, flags=re.IGNORECASE)
+            # Destaca palavras "de" e "para"
+            mensagem_formatada = re.sub(r'\b(de)\b', r'**\1**', mensagem_formatada, flags=re.IGNORECASE)
             mensagem_formatada = re.sub(r'\b(para)\b', r'**\1**', mensagem_formatada, flags=re.IGNORECASE)
 
-            # Destaca a Ação e a Referência em cores
+            # Destaca Ação e Referência
             mensagem_formatada = re.sub(
                 r"Ação:\s*(.*?)\s*—\s*Referência:\s*(.*)$",
                 r"<span style='color: red; font-weight: bold;'>Ação:</span> \1 — Referência: <span style='color: #1E90FF; font-weight: bold;'>\2</span>",
                 mensagem_formatada
             )
 
-            # Renderiza a tag de data/hora acompanhada da mensagem
-            st.markdown(f"{tag_data_hora} {mensagem_formatada}", unsafe_allow_html=True)
+            st.markdown(mensagem_formatada, unsafe_allow_html=True)
     else:
         st.write("Nenhum registro encontrado para os filtros selecionados.")
