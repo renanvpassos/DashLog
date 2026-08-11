@@ -60,19 +60,16 @@ def extract_spreadsheet_id(url: str) -> str:
     match = re.search(r"/d/([a-zA-Z0-9-_]+)", url)
     return match.group(1) if match else None
 
-def convert_to_csv_url(url: str, sheet_name: str = NOME_ABA_LOG) -> str:
+def convert_to_csv_url_by_gid(url: str, gid: str) -> str:
     """
-    Converte URLs do Google Sheets para o formato GViz CSV, apontando
-    diretamente para a aba pelo NOME (não mais pelo gid).
-
-    Isso garante que, independentemente de quantas abas a planilha tenha,
-    os dados sejam sempre lidos exclusivamente da aba 'LOG'.
+    Converte a URL do Google Sheets para exportação direta via GID,
+    permitindo a leitura de abas ocultas.
     """
     sheet_id = extract_spreadsheet_id(url)
     if not sheet_id:
         return url
 
-    return f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={sheet_name}"
+    return f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
 
 # ==========================================
 # LINKS DAS PLANILHAS FIXOS NO CÓDIGO
