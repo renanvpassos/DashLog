@@ -162,28 +162,31 @@ def highlight_log_message(mensagem: str) -> str:
     return mensagem
 
 def process_single_sheet_update(sheet_name, uploaded_df):
-    """Processa a aba 'LOG' e lê as colunas: REFERÊNCIA, IMPORTADOR, DIGITADOR, DATA ATUALIZACAO e OBSERVAÇÃO."""
+    """Processa a aba 'LOG' e lê as colunas ignorando erros de acentuação/encoding."""
+    
+    # 1. Normaliza os nomes das colunas existentes no DataFrame recebido
     new_columns = []
     for col in uploaded_df.columns:
         col_str = str(col).strip()
         norm_col = normalize_text(col_str)
         
-        if norm_col.startswith("REFERENCIA"):
+        if "REFERENC" in norm_col or "REFERANC" in norm_col:
             new_columns.append("REFERÊNCIA")
-        elif norm_col.startswith("IMPORTADOR"):
+        elif "IMPORTAD" in norm_col:
             new_columns.append("IMPORTADOR")
-        elif norm_col.startswith("DIGITADOR"):
+        elif "DIGITAD" in norm_col:
             new_columns.append("DIGITADOR")
         elif "DATA" in norm_col and "ATUALIZ" in norm_col:
             new_columns.append("DATA ATUALIZAÇÃO")
-        elif norm_col.startswith("OBSERVACAO"):
+        elif "OBSERVAC" in norm_col or "OBSERVAB" in norm_col:
             new_columns.append("OBSERVAÇÃO")
         else:
             new_columns.append(col_str)
             
     uploaded_df.columns = new_columns
 
-    req_cols = ["REFERÊNCIA", "IMPORTADOR", "DIGITADOR", "DATA ATUALIZAÇÃO", "OBSERVAÇÃO"]
+    # 2. Valida se as colunas essenciais existem após o mapeamento
+    req_cols = ["REFERÊNCIA", "DIGITADOR"]
     missing = [col for col in req_cols if col not in uploaded_df.columns]
     
     if missing:
@@ -232,7 +235,7 @@ def process_single_sheet_update(sheet_name, uploaded_df):
                     for col in curr_indexed.columns:
                         col_norm = normalize_text(col)
 
-                        # Ignoramos alterações diretas da própria data de atualização para evitar logs duplicados
+                        # Ignora alterações diretas da própria data de atualização
                         if col_norm in ["DATA ATUALIZACAO", "DATA ATUALIZAÇÃO"]:
                             continue
 
@@ -245,7 +248,6 @@ def process_single_sheet_update(sheet_name, uploaded_df):
                             else:
                                 acao = f"alterou o campo '{col}' de '{val_old}' para '{val_new}'"
                             
-                            # Formatação incluindo a Data de Atualização à esquerda da Observação
                             msg_log = (
                                 f"[{sheet_name}] {digitador} {acao} na Referência {ref} | "
                                 f"Importador: {importador} | Data Atualização: {data_atualizacao} | Obs: {observacao}"
