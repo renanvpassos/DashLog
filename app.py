@@ -125,7 +125,6 @@ def normalize_text(text: str) -> str:
     """Remove acentos, caracteres corrompidos (Mojibake), espaços extras e converte para maiúsculo."""
     text_str = str(text).strip()
     
-    # Tenta descorromper mojibake de UTF-8/Latin1
     try:
         text_str = text_str.encode('latin1').decode('utf-8')
     except (UnicodeEncodeError, UnicodeDecodeError):
@@ -135,25 +134,9 @@ def normalize_text(text: str) -> str:
     only_ascii = "".join([c for c in nfkd_form if not unicodedata.combining(c)])
     return only_ascii.upper()
 
-def highlight_log_message(mensagem: str) -> str:
-    """Aplica destaque de cores nos campos da mensagem de log."""
-    mensagem = re.sub(
-        r"de '([^']*)' para '([^']*)'",
-        r"de '<span style='color:#FF4B4B;font-weight:bold;'>\1</span>' "
-        r"para '<span style='color:#FF4B4B;font-weight:bold;'>\2</span>'",
-        mensagem
-    )
-    mensagem = re.sub(
-        r"(na Referência )(.+?)((?: \| Importador: .+)?)$",
-        r"\1<span style='color:#5DADE2;font-weight:bold;'>\2</span>\3",
-        mensagem
-    )
-    return mensagem
-
 def process_single_sheet_update(sheet_name, uploaded_df):
     """Processa a aba 'LOG' e lê as colunas ignorando erros de acentuação/encoding."""
     
-    # 1. Normaliza os nomes das colunas existentes no DataFrame recebido
     new_columns = []
     for col in uploaded_df.columns:
         col_str = str(col).strip()
@@ -174,7 +157,6 @@ def process_single_sheet_update(sheet_name, uploaded_df):
             
     uploaded_df.columns = new_columns
 
-    # 2. Valida se as colunas essenciais existem após o mapeamento
     req_cols = ["REFERÊNCIA", "DIGITADOR"]
     missing = [col for col in req_cols if col not in uploaded_df.columns]
     
@@ -224,7 +206,6 @@ def process_single_sheet_update(sheet_name, uploaded_df):
                     for col in curr_indexed.columns:
                         col_norm = normalize_text(col)
 
-                        # Ignora alterações diretas da própria data de atualização
                         if col_norm in ["DATA ATUALIZACAO", "DATA ATUALIZAÇÃO"]:
                             continue
 
@@ -261,7 +242,6 @@ def process_single_sheet_update(sheet_name, uploaded_df):
     return True, warning_msg
 
 def fetch_and_process_sheet(name, sheet_url, headers):
-    """Função auxiliar para download da aba LOG por nome e processamento concorrente."""
     try:
         csv_url = convert_to_gviz_url(sheet_url, sheet_name=NOME_ABA_LOG)
         response = requests.get(csv_url, headers=headers, timeout=15)
@@ -286,7 +266,6 @@ def fetch_and_process_sheet(name, sheet_url, headers):
         return False, f"❌ Erro inesperado ao processar '{name}': {e}"
 
 def executar_sincronizacao():
-    """Executa a sincronização de todas as planilhas."""
     sucessos = 0
     headers = {
         'User-Agent': (
@@ -328,7 +307,6 @@ class PDFReport(FPDF):
         self.cell(0, 10, f"Pagina {self.page_no()}/{{nb}}", align="C")
 
 def sanitize_pdf_text(text: str) -> str:
-    """Converte caracteres UTF-8 para um formato compatível com fontes padrão do FPDF."""
     return unicodedata.normalize('NFKD', str(text)).encode('latin-1', 'ignore').decode('latin-1')
 
 PDF_RED = (200, 30, 30)
@@ -336,7 +314,6 @@ PDF_BLUE = (41, 128, 185)
 PDF_BLACK = (0, 0, 0)
 
 def build_pdf_segments(mensagem: str):
-    """Quebra a mensagem em segmentos para aplicar cores no PDF."""
     segments = []
     pattern = re.compile(
         r"de '([^']*)' para '([^']*)'"
@@ -463,7 +440,6 @@ with col_search:
         placeholder="Nome do digitador, importador ou referência..."
     )
 
-# Busca logs direto no banco do Supabase referente ao período
 logs_periodo = load_logs_by_period(dt_inicio, dt_fim)
 
 if logs_periodo:
@@ -474,7 +450,6 @@ else:
 st.divider()
 
 # --- TRATAMENTO DOS LOGS E CRIAÇÃO DO DATAFRAME ---
-# --- LÓGICA DE DEDUPLICAÇÃO POR JANELA DE 5 MINUTOS ---
 total_acoes_agrupadas = 0
 
 if not df_logs_periodo.empty:
@@ -533,10 +508,10 @@ for log in logs_periodo:
     if search_query:
         q = search_query.lower()
         matches_search = (
-            q in log.get("digitador", "").lower() or 
-            q in log.get("referencia", "").lower() or 
-            q in log.get("mensagem", "").lower() or
-            q in log.get("sheet_name", "").lower()
+            q in str(log.get("digitador", "")).lower() or 
+            q in str(log.get("referencia", "")).lower() or 
+            q in str(log.get("mensagem", "")).lower() or
+            q in str(log.get("sheet_name", "")).lower()
         )
     if matches_search:
         filtered_logs.append(log)
@@ -563,41 +538,30 @@ log_container = st.container(height=380, border=True)
 with log_container:
     if filtered_logs:
         for entry in filtered_logs:
-            # 1. Data e Hora
-            data_atualizacao = entry.get('data_atualizacao', entry.get('timestamp', ''))
-            
-            # 2. Importador
-            importador = entry.get('importador', '')
-            if not importador:
-                match_imp = re.search(r'Importador:\s*([^|]+)', entry.get('mensagem', ''))
-                importador = match_imp.group(1).strip() if match_imp else 'N/A'
-            
-            # 3. Digitador
-            digitador = entry.get('digitador', '')
-            
-            # 4. Referência
-            referencia = entry.get('referencia', '')
-            if not referencia:
-                match_ref = re.search(r'Referência\s*([^|]+)', entry.get('mensagem', ''))
-                referencia = match_ref.group(1).strip() if match_ref else 'N/A'
-            
-            # 5. Tratamento da Observação/Ação
-            msg_raw = entry.get('observacao', entry.get('mensagem', ''))
-            match_obs = re.search(r'Obs:\s*(.*)', msg_raw)
-            if match_obs:
-                observacao = match_obs.group(1).strip()
-            else:
-                observacao = re.sub(r"^.*?alterou o campo 'OBSERVAÇÃO' de '-' para '", "", msg_raw)
-                observacao = re.sub(r"' na Referência.*$", "", observacao).strip()
+            data_atualizacao = entry.get('timestamp', '')
+            digitador = entry.get('digitador', 'N/A')
+            referencia = entry.get('referencia', 'N/A')
+            mensagem = entry.get('mensagem', '')
 
-            # Destaca em negrito as palavras "De" e "Para" (case insensitive)
-            observacao_formatada = re.sub(r'\b(de)\b', r'**\1**', observacao, flags=re.IGNORECASE)
-            observacao_formatada = re.sub(r'\b(para)\b', r'**\1**', observacao_formatada, flags=re.IGNORECASE)
+            # Extração segura de Importador e Ação da string de mensagem
+            match_imp = re.search(r'Importador:\s*([^|]+)', mensagem)
+            importador = match_imp.group(1).strip() if match_imp else 'N/A'
 
-            # Formatação HTML/Markdown com as cores solicitadas
+            # Remove prefixos e sufixos desnecessários da mensagem
+            acao_limpa = re.sub(r"^\[.*?\]\s*.*?\s*", "", mensagem) # Remove [NOME PLANILHA] e NOME
+            acao_limpa = re.sub(r"\s*\|\s*Importador:.*$", "", acao_limpa) # Remove sufixo do Importador em diante
+            
+            if not acao_limpa:
+                acao_limpa = mensagem
+
+            # Destaca em negrito as palavras "de" e "para"
+            acao_formatada = re.sub(r'\b(de)\b', r'**\1**', acao_limpa, flags=re.IGNORECASE)
+            acao_formatada = re.sub(r'\b(para)\b', r'**\1**', acao_formatada, flags=re.IGNORECASE)
+
+            # Renderização limpa
             st.markdown(
                 f"`{data_atualizacao}` — **[{importador}]** — **{digitador}** — "
-                f"<span style='color: red; font-weight: bold;'>Ação:</span> {observacao_formatada} — "
+                f"<span style='color: red; font-weight: bold;'>Ação:</span> {acao_formatada} — "
                 f"Referência: <span style='color: #1E90FF; font-weight: bold;'>{referencia}</span>", 
                 unsafe_allow_html=True
             )
