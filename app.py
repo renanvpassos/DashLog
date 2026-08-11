@@ -490,7 +490,6 @@ if not df_logs_periodo.empty:
 else:
     st.info("Nenhuma atividade registrada no período selecionado.")
 
-# --- LOG DE ATIVIDADES EM TEMPO REAL ---
 st.subheader("🪵 Log de Atividades dos Digitadores")
 
 filtered_logs = []
@@ -529,7 +528,14 @@ log_container = st.container(height=380, border=True)
 with log_container:
     if filtered_logs:
         for entry in filtered_logs:
+            data_hora = entry.get('data_hora', '')  # Altere para a chave correta da data/hora no seu dict
             mensagem = entry.get('mensagem', '')
+
+            # Formatação da data e hora em verde com fundo cinza claro
+            tag_data_hora = (
+                f"<span style='color: #2e7d32; background-color: #f0f2f6; "
+                f"padding: 2px 6px; border-radius: 4px; font-weight: bold;'>{data_hora}</span>"
+            )
 
             # Destaca em negrito as palavras "de" e "para"
             mensagem_formatada = re.sub(r'\b(de)\b', r'**\1**', mensagem, flags=re.IGNORECASE)
@@ -542,7 +548,7 @@ with log_container:
                 mensagem_formatada
             )
 
-            # Renderização no formato exato solicitado
-            st.markdown(mensagem_formatada, unsafe_allow_html=True)
+            # Renderiza a tag de data/hora acompanhada da mensagem
+            st.markdown(f"{tag_data_hora} {mensagem_formatada}", unsafe_allow_html=True)
     else:
         st.write("Nenhum registro encontrado para os filtros selecionados.")
