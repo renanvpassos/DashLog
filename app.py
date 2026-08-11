@@ -175,7 +175,6 @@ def process_single_sheet_update(sheet_name, uploaded_df):
     now_br = get_now_br()
     warning_msg = None
 
-    # Correção da indentação do bloco 'if' e 'try'
     if os.path.exists(cache_path):
         try:
             previous_df = pd.read_csv(cache_path, dtype=str).fillna("-")
@@ -198,7 +197,7 @@ def process_single_sheet_update(sheet_name, uploaded_df):
 
                     data_atualizacao = str(row_curr.get("DATA ATUALIZAÇÃO", "-")).strip()
                     if data_atualizacao in ["nan", "None", ""]:
-                        data_atualizacao = "-"
+                        data_atualizacao = now_br.strftime("%d/%m/%Y %H:%M:%S")
 
                     observacao = str(row_curr.get("OBSERVAÇÃO", "-")).strip()
                     if observacao in ["nan", "None", ""]:
@@ -220,18 +219,20 @@ def process_single_sheet_update(sheet_name, uploaded_df):
                         val_new = str(row_curr.get(col, "-")).strip()
 
                         if val_old != val_new:
-                            if col_norm in ["STATUS", "SITUACAO"]:
-                                acao = f"alterou o status de '{val_old}' para '{val_new}'"
+                            # Montagem do padrão de Ação exigido:
+                            # Ação: na coluna {col}: '{val_old}' de '-' para '{observacao}'
+                            if observacao != "-":
+                                acao_str = f"na coluna {col}: '{val_old}' de '-' para '{observacao}'"
                             else:
-                                acao = f"alterou o campo '{col}' de '{val_old}' para '{val_new}'"
-                            
+                                acao_str = f"alterou a coluna {col} de '{val_old}' para '{val_new}'"
+
                             msg_log = (
-                                f"[{sheet_name}] {digitador} {acao} na Referência {ref} | "
-                                f"Importador: {importador} | Data Atualização: {data_atualizacao} | Obs: {observacao}"
+                                f"{data_atualizacao} — [{importador}] — {digitador} — "
+                                f"Ação: {acao_str} — Referência: {ref}"
                             )
 
                             new_logs.append({
-                                "timestamp": now_br.strftime("%d/%m/%Y %H:%M:%S"),
+                                "timestamp": data_atualizacao,
                                 "date": now_br.strftime("%Y-%m-%d"),
                                 "sheet_name": str(sheet_name),
                                 "digitador": str(digitador),
@@ -322,10 +323,7 @@ PDF_BLACK = (0, 0, 0)
 
 def build_pdf_segments(mensagem: str):
     segments = []
-    pattern = re.compile(
-        r"de '([^']*)' para '([^']*)'"
-        r"|na Referência (.+?)(?: \| Importador: (.+))?$"
-    )
+    pattern = re.compile(r"de '([^']*)' para '([^']*)'|Referência: (.*)$")
     pos = 0
 
     for m in pattern.finditer(mensagem):
@@ -339,11 +337,9 @@ def build_pdf_segments(mensagem: str):
             segments.append(("' para '", None))
             segments.append((m.group(2), PDF_RED))
             segments.append(("'", None))
-        else:
-            segments.append(("na Referência ", None))
+        elif m.group(3) is not None:
+            segments.append(("Referência: ", None))
             segments.append((m.group(3), PDF_BLUE))
-            if m.group(4):
-                segments.append((f" | Importador: {m.group(4)}", None))
 
         pos = end
 
@@ -369,7 +365,6 @@ def generate_pdf(logs_filtered, start_date, end_date) -> bytes:
     pdf.set_font("Helvetica", "", 9)
     for item in logs_filtered:
         pdf.set_text_color(*PDF_BLACK)
-        pdf.write(6, sanitize_pdf_text(f"[{item['timestamp']}] "))
 
         segments = build_pdf_segments(item['mensagem'])
         for texto_seg, cor in segments:
@@ -460,7 +455,7 @@ st.divider()
 total_acoes_agrupadas = 0
 
 if not df_logs_periodo.empty:
-    df_logs_periodo["dt_temp"] = pd.to_datetime(df_logs_periodo["timestamp"], format="%d/%m/%Y %H:%M:%S")
+    df_logs_periodo["dt_temp"] = pd.to_datetime(df_logs_periodo["timestamp"], format="%d/%m/%Y %H:%M:%S", errors="coerce")
     df_logs_periodo = df_logs_periodo.sort_values(by=["referencia", "dt_temp"])
     
     df_logs_periodo["diff_minutos"] = (
@@ -545,32 +540,20 @@ log_container = st.container(height=380, border=True)
 with log_container:
     if filtered_logs:
         for entry in filtered_logs:
-            data_atualizacao = entry.get('timestamp', '')
-            digitador = entry.get('digitador', 'N/A')
-            referencia = entry.get('referencia', 'N/A')
             mensagem = entry.get('mensagem', '')
 
-            # Extração segura de Importador e Ação da string de mensagem
-            match_imp = re.search(r'Importador:\s*([^|]+)', mensagem)
-            importador = match_imp.group(1).strip() if match_imp else 'N/A'
-
-            # Remove prefixos e sufixos desnecessários da mensagem
-            acao_limpa = re.sub(r"^\[.*?\]\s*.*?\s*", "", mensagem) # Remove [NOME PLANILHA] e NOME
-            acao_limpa = re.sub(r"\s*\|\s*Importador:.*$", "", acao_limpa) # Remove sufixo do Importador em diante
-            
-            if not acao_limpa:
-                acao_limpa = mensagem
-
             # Destaca em negrito as palavras "de" e "para"
-            acao_formatada = re.sub(r'\b(de)\b', r'**\1**', acao_limpa, flags=re.IGNORECASE)
-            acao_formatada = re.sub(r'\b(para)\b', r'**\1**', acao_formatada, flags=re.IGNORECASE)
+            mensagem_formatada = re.sub(r'\b(de)\b', r'**\1**', mensagem, flags=re.IGNORECASE)
+            mensagem_formatada = re.sub(r'\b(para)\b', r'**\1**', mensagem_formatada, flags=re.IGNORECASE)
 
-            # Renderização limpa
-            st.markdown(
-                f"`{data_atualizacao}` — **[{importador}]** — **{digitador}** — "
-                f"<span style='color: red; font-weight: bold;'>Ação:</span> {acao_formatada} — "
-                f"Referência: <span style='color: #1E90FF; font-weight: bold;'>{referencia}</span>", 
-                unsafe_allow_html=True
+            # Destaca a Ação e a Referência em cores
+            mensagem_formatada = re.sub(
+                r"Ação:\s*(.*?)\s*—\s*Referência:\s*(.*)$",
+                r"<span style='color: red; font-weight: bold;'>Ação:</span> \1 — Referência: <span style='color: #1E90FF; font-weight: bold;'>\2</span>",
+                mensagem_formatada
             )
+
+            # Renderização no formato exato solicitado
+            st.markdown(mensagem_formatada, unsafe_allow_html=True)
     else:
         st.write("Nenhum registro encontrado para os filtros selecionados.")
