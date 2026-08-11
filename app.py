@@ -524,38 +524,33 @@ if logs_periodo:
     if search_query.strip():
         term = search_query.strip().lower()
         for log in logs_periodo:
+            # Busca o termo na mensagem ou nos campos individuais
             msg = str(log.get("mensagem", "")).lower()
             digitador = str(log.get("digitador", "")).lower()
             referencia = str(log.get("referencia", "")).lower()
             sheet = str(log.get("sheet_name", "")).lower()
-            data_atualizacao = str(log.get("DATA ATUALIZAÇÃO", log.get("data_atualizacao", ""))).lower()
 
             if (
                 term in msg
                 or term in digitador
                 or term in referencia
                 or term in sheet
-                or term in data_atualizacao
             ):
                 filtered_logs.append(log)
     else:
         filtered_logs = logs_periodo.copy()
 
 
-# 2. Função auxiliar para extrair e converter a data da coluna 'DATA ATUALIZAÇÃO'
+# 2. Função auxiliar para extrair e converter a data da mensagem/timestamp
 def obter_data_log(entry):
-    # Prioriza o campo vindo da coluna da planilha
-    dt_str = str(entry.get("DATA ATUALIZAÇÃO", entry.get("data_atualizacao", entry.get("timestamp", "")))).strip()
-    
-    # Formatos comuns de data/hora para tentar a conversão
-    formatos = ["%d/%m/%Y %H:%M:%S", "%Y-%m-%d %H:%M:%S", "%d/%m/%Y %H:%M"]
-    for fmt in formatos:
-        try:
-            return datetime.strptime(dt_str, fmt)
-        except Exception:
-            continue
+    # Tenta obter pelo timestamp cadastrado
+    timestamp_str = entry.get("timestamp", "")
+    try:
+        return datetime.strptime(timestamp_str, "%d/%m/%Y %H:%M:%S")
+    except Exception:
+        pass
 
-    # Fallback: Tenta extrair via Regex do texto da mensagem
+    # Caso falhe, tenta extrair via Regex do texto da mensagem
     msg = entry.get("mensagem", "")
     match = re.search(r"^(\d{2}/\d{2}/\d{4}\s\d{2}:\d{2}:\d{2})", msg)
     if match:
@@ -580,28 +575,12 @@ with log_container:
         for entry in logs_ordenados:
             mensagem = entry.get("mensagem", "")
 
-            # Obtém a data da coluna 'DATA ATUALIZAÇÃO' (aceita maiúsculo ou minúsculo)
-            data_atualizacao = str(
-                entry.get("DATA ATUALIZAÇÃO", entry.get("data_atualizacao", ""))
-            ).strip()
-
-            if data_atualizacao:
-                # Se a mensagem já começa com uma data antiga, substitui ela pela data da coluna
-                if re.match(r"^\d{2}/\d{2}/\d{4}\s\d{2}:\d{2}:\d{2}\s*", mensagem):
-                    mensagem = re.sub(
-                        r"^\d{2}/\d{2}/\d{4}\s\d{2}:\d{2}:\d{2}\s*", "", mensagem
-                    )
-                
-                # Formata a nova data/hora no padrão destacado
-                tag_data = f"<span style='color: #008000 !important; background-color: #e0e0e0; padding: 3px 8px; border-radius: 4px; font-weight: bold; display: inline-block;'>{data_atualizacao}</span> "
-                mensagem_formatada = tag_data + mensagem
-            else:
-                # Fallback usando a regex original caso a coluna 'DATA ATUALIZAÇÃO' esteja vazia
-                mensagem_formatada = re.sub(
-                    r"^(\d{2}/\d{2}/\d{4}\s\d{2}:\d{2}:\d{2})",
-                    r"<span style='color: #008000 !important; background-color: #e0e0e0; padding: 3px 8px; border-radius: 4px; font-weight: bold; display: inline-block;'>\1</span>",
-                    mensagem,
-                )
+            # Destaca a data/hora no início da string (Ex: 11/08/2026 14:30:00)
+            mensagem_formatada = re.sub(
+                r"^(\d{2}/\d{2}/\d{4}\s\d{2}:\d{2}:\d{2})",
+                r"<span style='color: #008000 !important; background-color: #e0e0e0; padding: 3px 8px; border-radius: 4px; font-weight: bold; display: inline-block;'>\1</span>",
+                mensagem,
+            )
 
             # Destaca palavras "de" e "para"
             mensagem_formatada = re.sub(
