@@ -454,6 +454,25 @@ if not df_logs_periodo.empty:
     df_logs_periodo["nova_acao"] = df_logs_periodo["diff_minutos"].isna() | (df_logs_periodo["diff_minutos"] >= 1.0)
     total_acoes_agrupadas = int(df_logs_periodo["nova_acao"].sum())
 
+# --- LÓGICA DE CÁLCULO DE AÇÕES AGRUPADAS (< 2 MINUTOS POR DIGITADOR) ---
+if not df_logs_periodo.empty:
+    # 1. Garantir ordenação por digitador e horário
+    df_sorted = df_logs_periodo.sort_values(by=["digitador", "data_hora"]).copy()
+    
+    # 2. Converter coluna para datetime (se já não estiver)
+    df_sorted["data_hora"] = pd.to_datetime(df_sorted["data_hora"])
+    
+    # 3. Calcular a diferença de tempo entre ações consecutivas do mesmo digitador
+    df_sorted["diff_tempo"] = df_sorted.groupby("digitador")["data_hora"].diff()
+    
+    # 4. Considera "nova ação" se for a primeira do digitador (NaT) ou se o intervalo for > 2 minutos (120 seg)
+    df_sorted["nova_acao"] = df_sorted["diff_tempo"].isna() | (df_sorted["diff_tempo"].dt.total_seconds() > 120)
+    
+    # 5. Total de ações considerando o agrupamento por tempo
+    total_acoes_agrupadas = df_sorted["nova_acao"].sum()
+else:
+    total_acoes_agrupadas = 0
+
 # --- ESTATÍSTICAS BASEADAS NO PERÍODO SELECIONADO ---
 st.subheader(f"📈 Estatísticas no Período ({dt_inicio.strftime('%d/%m/%Y')} a {dt_fim.strftime('%d/%m/%Y')})")
 
@@ -490,6 +509,7 @@ if not df_logs_periodo.empty:
 else:
     st.info("Nenhuma atividade registrada no período selecionado.")
 
+# -- LOG ATIVIDADES ---
 st.subheader("🪵 Log de Atividades dos Digitadores")
 
 filtered_logs = []
