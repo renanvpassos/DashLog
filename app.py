@@ -48,39 +48,21 @@ def init_supabase() -> Client:
 supabase = init_supabase()
 
 # ==========================================
-# CONVERSOR DE LINK (Google Sheets para GViz CSV)
+# CONVERSOR DE LINK (Google Sheets para GViz CSV por Nome de Aba)
 # ==========================================
 NOME_ABA_LOG = "LOG"
-
-def normalizar_coluna(nome):
-    if not isinstance(nome, str):
-        return nome
-    
-    # Tenta corrigir eventual dupla codificação UTF-8 / Mojibake
-    try:
-        nome = nome.encode('latin1').decode('utf-8')
-    except (UnicodeEncodeError, UnicodeDecodeError):
-        pass
-    
-    # Remove acentos e converte para maiúsculas sem espaços extras
-    nome = unicodedata.normalize('NFD', nome)
-    nome = ''.join(c for c in nome if unicodedata.category(c) != 'Mn')
-    return nome.strip().upper()
-
-# Exemplo de uso ao ler o DataFrame da aba LOG:
-df_log.columns = [normalizar_coluna(col) for col in df_log.columns]
 
 def extract_spreadsheet_id(url: str) -> str:
     """Extrai o ID da planilha do Google Sheets."""
     match = re.search(r"/d/([a-zA-Z0-9-_]+)", url)
     return match.group(1) if match else None
 
-def convert_to_csv_url(url: str, gid: str = "0") -> str:
-    """Converte a URL do Google Sheets para formato de exportação direta CSV."""
+def convert_to_gviz_url(url: str, sheet_name: str = NOME_ABA_LOG) -> str:
+    """Converte a URL do Google Sheets para o endpoint GViz que consulta diretamente pelo nome da aba."""
     sheet_id = extract_spreadsheet_id(url)
     if not sheet_id:
         return url
-    return f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
+    return f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={sheet_name}"
 
 # ==========================================
 # LINKS DAS PLANILHAS FIXOS NO CÓDIGO
@@ -140,9 +122,16 @@ def add_log_entries_bulk(logs_list):
 # TRATAMENTO DE TEXTO E COMPARADOR DE PLANILHAS
 # ==========================================
 def normalize_text(text: str) -> str:
-    """Remove acentos, espaços extras e converte para maiúsculo."""
-    text = str(text).strip()
-    nfkd_form = unicodedata.normalize('NFKD', text)
+    """Remove acentos, caracteres corrompidos (Mojibake), espaços extras e converte para maiúsculo."""
+    text_str = str(text).strip()
+    
+    # Tenta descorromper mojibake de UTF-8/Latin1
+    try:
+        text_str = text_str.encode('latin1').decode('utf-8')
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        pass
+        
+    nfkd_form = unicodedata.normalize('NFKD', text_str)
     only_ascii = "".join([c for c in nfkd_form if not unicodedata.combining(c)])
     return only_ascii.upper()
 
@@ -191,7 +180,7 @@ def process_single_sheet_update(sheet_name, uploaded_df):
     
     if missing:
         erro = (
-            f"❌ A aba 'LOG' da planilha '{sheet_name}' não possui as colunas necessárias: {', '.join(missing)}.\n\n"
+            f"❌ A aba '{NOME_ABA_LOG}' da planilha '{sheet_name}' não possui as colunas necessárias: {', '.join(missing)}.\n\n"
             f"**Colunas encontradas:** {list(uploaded_df.columns)}"
         )
         return False, erro
@@ -271,22 +260,16 @@ def process_single_sheet_update(sheet_name, uploaded_df):
     uploaded_df.to_csv(cache_path, index=False)
     return True, warning_msg
 
-def fetch_and_process_sheet(name, sheet_info, headers):
-    """Função auxiliar para download e processamento concorrente."""
+def fetch_and_process_sheet(name, sheet_url, headers):
+    """Função auxiliar para download da aba LOG por nome e processamento concorrente."""
     try:
-        url = sheet_info["url"] if isinstance(sheet_info, dict) else sheet_info
-        gid = sheet_info.get("gid", "0") if isinstance(sheet_info, dict) else "0"
-
-        csv_url = convert_to_csv_url(url, gid=gid)
+        csv_url = convert_to_gviz_url(sheet_url, sheet_name=NOME_ABA_LOG)
         response = requests.get(csv_url, headers=headers, timeout=15)
         
         if response.status_code == 200:
             corpo = response.text.strip()
             if corpo.startswith("<") or "google-viz-error" in corpo.lower():
-                return False, (
-                    f"❌ **'{name}'**: A resposta retornada não é um CSV válido. "
-                    f"Confirme se o GID informado para a aba '{NOME_ABA_LOG}' está correto."
-                )
+                return False, f"❌ **Erro na '{name}'**: A aba '{NOME_ABA_LOG}' não foi encontrada ou a planilha não está compartilhada como 'Qualquer pessoa com o link'."
 
             df_dl = pd.read_csv(io.StringIO(response.text), dtype=str)
             success, msg = process_single_sheet_update(name, df_dl)
@@ -315,8 +298,8 @@ def executar_sincronizacao():
 
     with ThreadPoolExecutor(max_workers=5) as executor:
         futures = [
-            executor.submit(fetch_and_process_sheet, name, info, headers)
-            for name, info in LISTA_PLANILHAS.items()
+            executor.submit(fetch_and_process_sheet, name, url, headers)
+            for name, url in LISTA_PLANILHAS.items()
         ]
 
         for future in as_completed(futures):
