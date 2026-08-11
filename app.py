@@ -52,6 +52,24 @@ supabase = init_supabase()
 # ==========================================
 NOME_ABA_LOG = "LOG"
 
+def normalizar_coluna(nome):
+    if not isinstance(nome, str):
+        return nome
+    
+    # Tenta corrigir eventual dupla codificação UTF-8 / Mojibake
+    try:
+        nome = nome.encode('latin1').decode('utf-8')
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        pass
+    
+    # Remove acentos e converte para maiúsculas sem espaços extras
+    nome = unicodedata.normalize('NFD', nome)
+    nome = ''.join(c for c in nome if unicodedata.category(c) != 'Mn')
+    return nome.strip().upper()
+
+# Exemplo de uso ao ler o DataFrame da aba LOG:
+df_log.columns = [normalizar_coluna(col) for col in df_log.columns]
+
 def extract_spreadsheet_id(url: str) -> str:
     """Extrai o ID da planilha do Google Sheets."""
     match = re.search(r"/d/([a-zA-Z0-9-_]+)", url)
