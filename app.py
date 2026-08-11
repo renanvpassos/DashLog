@@ -440,27 +440,15 @@ else:
 
 st.divider()
 
-# --- TRATAMENTO DOS LOGS E CRIAÇÃO DO DATAFRAME ---
+# --- LÓGICA DE CÁLCULO DE AÇÕES AGRUPADAS (> 2 MINUTOS POR DIGITADOR) ---
 total_acoes_agrupadas = 0
 
-if not df_logs_periodo.empty:
-    df_logs_periodo["dt_temp"] = pd.to_datetime(df_logs_periodo["timestamp"], format="%d/%m/%Y %H:%M:%S", errors="coerce")
-    df_logs_periodo = df_logs_periodo.sort_values(by=["referencia", "dt_temp"])
-    
-    df_logs_periodo["diff_minutos"] = (
-        df_logs_periodo.groupby("referencia")["dt_temp"].diff().dt.total_seconds() / 60.0
-    )
-    
-    df_logs_periodo["nova_acao"] = df_logs_periodo["diff_minutos"].isna() | (df_logs_periodo["diff_minutos"] >= 1.0)
-    total_acoes_agrupadas = int(df_logs_periodo["nova_acao"].sum())
-
-# --- LÓGICA DE CÁLCULO DE AÇÕES AGRUPADAS (< 2 MINUTOS POR DIGITADOR) ---
 if not df_logs_periodo.empty:
     # 1. Ordenação por digitador e pela coluna DATA ATUALIZAÇÃO
     df_sorted = df_logs_periodo.sort_values(by=["digitador", "DATA ATUALIZAÇÃO"]).copy()
     
     # 2. Converter a coluna DATA ATUALIZAÇÃO para datetime
-    df_sorted["DATA ATUALIZAÇÃO"] = pd.to_datetime(df_sorted["DATA ATUALIZAÇÃO"])
+    df_sorted["DATA ATUALIZAÇÃO"] = pd.to_datetime(df_sorted["DATA ATUALIZAÇÃO"], errors="coerce")
     
     # 3. Calcular a diferença de tempo entre ações consecutivas do mesmo digitador
     df_sorted["diff_tempo"] = df_sorted.groupby("digitador")["DATA ATUALIZAÇÃO"].diff()
@@ -469,9 +457,10 @@ if not df_logs_periodo.empty:
     df_sorted["nova_acao"] = df_sorted["diff_tempo"].isna() | (df_sorted["diff_tempo"].dt.total_seconds() > 120)
     
     # 5. Total de ações agrupadas no período
-    total_acoes_agrupadas = df_sorted["nova_acao"].sum()
-else:
-    total_acoes_agrupadas = 0
+    total_acoes_agrupadas = int(df_sorted["nova_acao"].sum())
+    
+    # 6. Filtrar apenas as linhas consideradas "novas ações" para os gráficos agrupados
+    df_acoes_filtradas = df_sorted[df_sorted["nova_acao"]]
 
 # --- ESTATÍSTICAS BASEADAS NO PERÍODO SELECIONADO ---
 st.subheader(f"📈 Estatísticas no Período ({dt_inicio.strftime('%d/%m/%Y')} a {dt_fim.strftime('%d/%m/%Y')})")
@@ -490,14 +479,15 @@ if not df_logs_periodo.empty:
         c1, c2 = st.columns(2)
         with c1:
             st.markdown("**Atividades por Digitador (Geral)**")
-            st.bar_chart(df_logs_periodo["digitador"].value_counts())
+            # Exibe contagem ajustada pela regra dos 2 minutos
+            st.bar_chart(df_acoes_filtradas["digitador"].value_counts())
         with c2:
             st.markdown("**Atividades por Planilha**")
-            st.bar_chart(df_logs_periodo["sheet_name"].value_counts())
+            st.bar_chart(df_acoes_filtradas["sheet_name"].value_counts())
 
     for idx, sheet_key in enumerate(planilhas_com_log[1:], start=1):
         with tabs[idx]:
-            df_sheet_logs = df_logs_periodo[df_logs_periodo["sheet_name"] == sheet_key]
+            df_sheet_logs = df_acoes_filtradas[df_acoes_filtradas["sheet_name"] == sheet_key]
             
             c_s1, c_s2 = st.columns(2)
             with c_s1:
