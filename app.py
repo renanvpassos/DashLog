@@ -68,23 +68,8 @@ def convert_to_gviz_url(url: str, sheet_name: str = NOME_ABA_LOG) -> str:
 # LINKS DAS PLANILHAS FIXOS NO CÓDIGO
 # ==========================================
 LISTA_PLANILHAS = {
-    "PLANILHA ROCHE": "https://docs.google.com/spreadsheets/d/1ym-kHhuaW1pD5KNXzrmgY2QaUSol339R4fCHdGRS3K8",
-    "PLANILHA RENAN": "https://docs.google.com/spreadsheets/d/1zRkVSttkkpqekEdXjGPlz3-Dl7NzgqnkbGioJGuAdRY",
-    "PLANILHA VALERIA": "https://docs.google.com/spreadsheets/d/1uJzArQ8oF19s2yYQD3BFoNeaZW_xPMdD1RvdSIWnGR8",
-    "PLANILHA SALVADOR LENNON": "https://docs.google.com/spreadsheets/d/1Q0BMTebNMSEyGqTwuQjy2r6nLeSNQE7oIhEntpUhQAA",
-    "PLANILHA RIO LENNON": "https://docs.google.com/spreadsheets/d/10P8YgNIqxox-MqDA63DnO5yKAueAQ5GgJONDH2fu9-8",
-    "PLANILHA ABB": "https://docs.google.com/spreadsheets/d/1gNeE9CY8KLaI7DOajWFJcGmZ-UuS4ME8firbFkovNS4",
-    "PLANILHA KERING": "https://docs.google.com/spreadsheets/d/1mH3TIpm23KkNK-JODDwfd8Igqm1ZtvIeQRUTJAHLZVI",
-    "PLANILHA ZARA": "https://docs.google.com/spreadsheets/d/1CSX4tQoZsspQ0GmVHuzt5h0ABc28Bdd_DqyPR-rGNns",
-    "PLANILHA PRADA": "https://docs.google.com/spreadsheets/d/11xDf-tkye_MeVOh_Re5_Piby9_AdVNv-_TOJyqEk9rQ",
-    "PLANILHA LOUIS VUITTON": "https://docs.google.com/spreadsheets/d/1zgYootR8Dx5arj7O3Mi31nTgUgvr8xpxhatgn5DgPok",
-    "PLANILHA FASHION DIVERSOS": "https://docs.google.com/spreadsheets/d/1Xzggnm2N0YizRHUs0V--cr5OZh5ypSbAReEK_iSchT0",
-    "PLANILHA RAYANE": "https://docs.google.com/spreadsheets/d/1Ch3UFNIBYKVm4BF48iB-DjCbcrzUwM0Cl_QG6NB16_4",
-    "PLANILHA ADIENT": "https://docs.google.com/spreadsheets/d/1Ii3u9yezVPscByz2q33uTGXPCNL64JV5syXArMnPeP0",
-    "PLANILHA HENKEL": "https://docs.google.com/spreadsheets/d/1iZ9CcRjNk_C3uAWRTYO1xMGyLzGKKWLTHPguxq4pHOE",
-    "PLANILHA SCANIA": "https://docs.google.com/spreadsheets/d/1BJpKdZlGo13vxs_sJ-467_RJbP8BBbMpD89pxrkzCFM",
-    "PLANILHA SIG COMBIBLOC": "https://docs.google.com/spreadsheets/d/1EjLNlp5-_vmRQ834JWIH0rGSqZre3MvNoiHF92RI2LQ",
-    "PLANILHA LI LPCO": "https://docs.google.com/spreadsheets/d/12335GUBYHgby3V4Q5w8gM0whd9YhzmV3ainB7AF_Yz8",
+    f"PLANILHA {nome.replace('_', ' ')}": f"https://docs.google.com/spreadsheets/d/{sheet_id}"
+    for nome, sheet_id in st.secrets["planilhas"].items()
 }
 
 DATA_DIR = "data"
