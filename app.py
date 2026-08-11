@@ -255,30 +255,27 @@ def fetch_and_process_sheet(name, url, headers):
         csv_url = convert_to_csv_url(url)
         response = requests.get(csv_url, headers=headers, timeout=15)
         
+        # Se a aba estiver oculta, o Google pode responder com erro 400 ou página HTML
         if response.status_code == 200:
-            # 🔎 Detecta o caso em que o Google retorna 200 mas o corpo é uma
-            # página de erro HTML (ex.: aba inexistente tratada de forma "soft"),
-            # em vez de um CSV de verdade.
             corpo = response.text.strip()
             if corpo.startswith("<") or "google-viz-error" in corpo.lower():
                 return False, (
-                    f"❌ **'{name}'**: a resposta para a aba '{NOME_ABA_LOG}' não é um CSV válido "
-                    f"(o Google retornou uma página de erro). Confirme se a aba '{NOME_ABA_LOG}' existe "
-                    f"exatamente com esse nome nesta planilha."
+                    f"❌ **'{name}'**: Não foi possível ler a aba '{NOME_ABA_LOG}'. "
+                    f"Verifique se a aba não está **oculta** ou com o nome incorreto."
                 )
 
             df_dl = pd.read_csv(io.StringIO(response.text), dtype=str)
             success, msg = process_single_sheet_update(name, df_dl)
             if success:
-                return True, msg  # msg pode ser um warning não-fatal (ou None)
+                return True, msg
             return False, msg
-        elif response.status_code == 400:
+        elif response.status_code in (400, 404):
             return False, (
-                f"❌ **Erro 400 na '{name}'**: A aba '{NOME_ABA_LOG}' não foi encontrada nesta planilha "
-                f"(ou o nome está diferente/com erro de digitação). Verifique se existe uma aba chamada exatamente '{NOME_ABA_LOG}'."
+                f"❌ **Erro na '{name}'**: A aba '{NOME_ABA_LOG}' não foi encontrada "
+                f"ou está oculta."
             )
         elif response.status_code == 403:
-            return False, f"❌ **Erro 403 na '{name}'**: Acesso negado. Verifique as permissões de compartilhamento."
+            return False, f"❌ **Erro 403 na '{name}'**: Acesso negado. Verifique o compartilhamento."
         else:
             return False, f"❌ Erro HTTP {response.status_code} na planilha '{name}'."
     except Exception as e:
