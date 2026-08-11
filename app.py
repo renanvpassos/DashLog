@@ -157,7 +157,7 @@ def process_single_sheet_update(sheet_name, uploaded_df):
         elif norm_col.startswith("IMPORTADOR"):
             new_columns.append("IMPORTADOR")
         elif norm_col.startswith("OBSERVAÇÃO"):
-        new_columns.append("OBSERVAÇÃO")
+            new_columns.append("OBSERVAÇÃO")
         else:
             new_columns.append(col_str)
             
@@ -346,7 +346,7 @@ def build_pdf_segments(mensagem: str):
 
     return segments
 
-def generate_pdf(logs_filtered, start_date, end_date):
+def generate_pdf(logs_filtered, start_date, end_date) -> bytes:
     pdf = PDFReport()
     pdf.alias_nb_pages()
     pdf.add_page()
@@ -373,7 +373,7 @@ def generate_pdf(logs_filtered, start_date, end_date):
         pdf.set_text_color(*PDF_BLACK)
         pdf.ln(8)
 
-    return pdf.output()
+    return bytes(pdf.output())
 
 # ==========================================
 # TELA DE AUTENTICAÇÃO
@@ -542,7 +542,7 @@ if filtered_logs:
         )
         st.download_button(
             label="📄 Extrair Relatório PDF (Registros Exibidos)",
-            data=bytes(pdf_bytes),
+            data=pdf_bytes,
             file_name=f"relatorio_digitacao_{dt_inicio.strftime('%d-%m-%Y')}_{dt_fim.strftime('%d-%m-%Y')}.pdf",
             mime="application/pdf"
         )
