@@ -514,41 +514,87 @@ if not df_logs_periodo.empty:
 else:
     st.info("Nenhuma atividade registrada no período selecionado.")
 
+# -- LOG ATIVIDADES ---
 st.markdown("**Histórico de Eventos:**")
 log_container = st.container(height=380, border=True)
 
-# Função auxiliar para extrair e converter a data da mensagem
+# 1. Aplica o filtro da barra de pesquisa (search_query) sobre os logs do período
+filtered_logs = []
+if logs_periodo:
+    if search_query.strip():
+        term = search_query.strip().lower()
+        for log in logs_periodo:
+            # Busca o termo na mensagem ou nos campos individuais
+            msg = str(log.get("mensagem", "")).lower()
+            digitador = str(log.get("digitador", "")).lower()
+            referencia = str(log.get("referencia", "")).lower()
+            sheet = str(log.get("sheet_name", "")).lower()
+
+            if (
+                term in msg
+                or term in digitador
+                or term in referencia
+                or term in sheet
+            ):
+                filtered_logs.append(log)
+    else:
+        filtered_logs = logs_periodo.copy()
+
+
+# 2. Função auxiliar para extrair e converter a data da mensagem/timestamp
 def obter_data_log(entry):
-    msg = entry.get('mensagem', '')
+    # Tenta obter pelo timestamp cadastrado
+    timestamp_str = entry.get("timestamp", "")
+    try:
+        return datetime.strptime(timestamp_str, "%d/%m/%Y %H:%M:%S")
+    except Exception:
+        pass
+
+    # Caso falhe, tenta extrair via Regex do texto da mensagem
+    msg = entry.get("mensagem", "")
     match = re.search(r"^(\d{2}/\d{2}/\d{4}\s\d{2}:\d{2}:\d{2})", msg)
     if match:
-        return datetime.strptime(match.group(1), "%d/%m/%Y %H:%M:%S")
+        try:
+            return datetime.strptime(match.group(1), "%d/%m/%Y %H:%M:%S")
+        except Exception:
+            pass
+
     return datetime.min
 
-# Ordena a lista do mais recente para o mais antigo
-logs_ordenados = sorted(filtered_logs, key=obter_data_log, reverse=True) if filtered_logs else []
 
+# 3. Ordena do registro mais recente para o mais antigo
+logs_ordenados = (
+    sorted(filtered_logs, key=obter_data_log, reverse=True)
+    if filtered_logs
+    else []
+)
+
+# 4. Renderização dos logs formatados
 with log_container:
     if logs_ordenados:
         for entry in logs_ordenados:
-            mensagem = entry.get('mensagem', '')
+            mensagem = entry.get("mensagem", "")
 
             # Destaca a data/hora no início da string (Ex: 11/08/2026 14:30:00)
             mensagem_formatada = re.sub(
                 r"^(\d{2}/\d{2}/\d{4}\s\d{2}:\d{2}:\d{2})",
                 r"<span style='color: #008000 !important; background-color: #e0e0e0; padding: 3px 8px; border-radius: 4px; font-weight: bold; display: inline-block;'>\1</span>",
-                mensagem
+                mensagem,
             )
 
             # Destaca palavras "de" e "para"
-            mensagem_formatada = re.sub(r'\b(de)\b', r'**\1**', mensagem_formatada, flags=re.IGNORECASE)
-            mensagem_formatada = re.sub(r'\b(para)\b', r'**\1**', mensagem_formatada, flags=re.IGNORECASE)
+            mensagem_formatada = re.sub(
+                r"\b(de)\b", r"**\1**", mensagem_formatada, flags=re.IGNORECASE
+            )
+            mensagem_formatada = re.sub(
+                r"\b(para)\b", r"**\1**", mensagem_formatada, flags=re.IGNORECASE
+            )
 
             # Destaca Ação e Referência
             mensagem_formatada = re.sub(
                 r"Ação:\s*(.*?)\s*—\s*Referência:\s*(.*)$",
                 r"<span style='color: red; font-weight: bold;'>Ação:</span> \1 — Referência: <span style='color: #1E90FF; font-weight: bold;'>\2</span>",
-                mensagem_formatada
+                mensagem_formatada,
             )
 
             st.markdown(mensagem_formatada, unsafe_allow_html=True)
