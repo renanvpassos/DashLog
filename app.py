@@ -515,44 +515,23 @@ else:
     st.info("Nenhuma atividade registrada no período selecionado.")
     
 # -- LOG ATIVIDADES ---
-st.subheader("🪵 Log de Atividades dos Digitadores")
-
-filtered_logs = []
-for log in logs_periodo:
-    matches_search = True
-    if search_query:
-        q = search_query.lower()
-        matches_search = (
-            q in str(log.get("digitador", "")).lower() or 
-            q in str(log.get("referencia", "")).lower() or 
-            q in str(log.get("mensagem", "")).lower() or
-            q in str(log.get("sheet_name", "")).lower()
-        )
-    if matches_search:
-        filtered_logs.append(log)
-
-if filtered_logs:
-    try:
-        pdf_bytes = generate_pdf(
-            filtered_logs,
-            dt_inicio,
-            dt_fim
-        )
-        st.download_button(
-            label="📄 Extrair Relatório PDF (Registros Exibidos)",
-            data=pdf_bytes,
-            file_name=f"relatorio_digitacao_{dt_inicio.strftime('%d-%m-%Y')}_{dt_fim.strftime('%d-%m-%Y')}.pdf",
-            mime="application/pdf"
-        )
-    except Exception as e:
-        st.error(f"Erro ao gerar PDF: {e}")
-
 st.markdown("**Histórico de Eventos:**")
 log_container = st.container(height=380, border=True)
 
+# Função auxiliar para extrair e converter a data da mensagem
+def obter_data_log(entry):
+    msg = entry.get('mensagem', '')
+    match = re.search(r"^(\d{2}/\d{2}/\d{4}\s\d{2}:\d{2}:\d{2})", msg)
+    if match:
+        return datetime.strptime(match.group(1), "%d/%m/%Y %H:%M:%S")
+    return datetime.min
+
+# Ordena a lista do mais recente para o mais antigo
+logs_ordenados = sorted(filtered_logs, key=obter_data_log, reverse=True) if filtered_logs else []
+
 with log_container:
-    if filtered_logs:
-        for entry in filtered_logs:
+    if logs_ordenados:
+        for entry in logs_ordenados:
             mensagem = entry.get('mensagem', '')
 
             # Destaca a data/hora no início da string (Ex: 11/08/2026 14:30:00)
