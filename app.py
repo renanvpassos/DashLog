@@ -22,18 +22,9 @@ def get_now_br() -> datetime:
     """Retorna o datetime atual no fuso de Brasília."""
     return datetime.now(TZ_BR)
 
-# Criamos 2 colunas: a primeira ocupa a maior parte do espaço e a segunda o canto direito
-col_titulo, col_logo = st.columns([0.8, 0.2], vertical_alignment="center")
-
-with col_titulo:
-    st.title("📊 Monitor Operacional em Tempo Real")
-
-with col_logo:
-    st.image("logoMult.png", use_container_width=True)
-
+st.title("📊 Monitor Operacional em Tempo Real")
 st.caption(f"Monitorando **{len(LISTA_PLANILHAS)}** planilha(s) configurada(s) — dados lidos da aba **'{NOME_ABA_LOG}'**. *(Atenção: Atualiza automaticamente a cada 20 segundos)*")
-
-st.divider()
+st.divider() 
 
 # ---------------------------------------------------------
 # AUTOMAÇÃO: Recarrega/Executa a cada 20 segundos (20.000ms)
