@@ -563,33 +563,42 @@ log_container = st.container(height=380, border=True)
 with log_container:
     if filtered_logs:
         for entry in filtered_logs:
-            # 1. Pega a Data e Hora (prioriza a coluna de atualização, senão o timestamp do log)
+            # 1. Data e Hora
             data_atualizacao = entry.get('data_atualizacao', entry.get('timestamp', ''))
             
-            # 2. Pega a chave 'importador' se existir, senão extrai do texto via Regex
+            # 2. Importador
             importador = entry.get('importador', '')
             if not importador:
                 match_imp = re.search(r'Importador:\s*([^|]+)', entry.get('mensagem', ''))
                 importador = match_imp.group(1).strip() if match_imp else 'N/A'
             
-            # 3. Pega o Digitador
+            # 3. Digitador
             digitador = entry.get('digitador', '')
             
-            # 4. Trata a OBSERVAÇÃO/AÇÃO para extrair apenas a mudança limpa
-            msg_raw = entry.get('observacao', entry.get('mensagem', ''))
+            # 4. Referência
+            referencia = entry.get('referencia', '')
+            if not referencia:
+                match_ref = re.search(r'Referência\s*([^|]+)', entry.get('mensagem', ''))
+                referencia = match_ref.group(1).strip() if match_ref else 'N/A'
             
-            # Procura por "Obs: ..." ao final do texto para pegar a ação limpa
+            # 5. Tratamento da Observação/Ação
+            msg_raw = entry.get('observacao', entry.get('mensagem', ''))
             match_obs = re.search(r'Obs:\s*(.*)', msg_raw)
             if match_obs:
                 observacao = match_obs.group(1).strip()
             else:
-                # Caso não tenha "Obs:", limpa o trecho "Renan Veloso alterou o campo..."
                 observacao = re.sub(r"^.*?alterou o campo 'OBSERVAÇÃO' de '-' para '", "", msg_raw)
                 observacao = re.sub(r"' na Referência.*$", "", observacao).strip()
 
-            # Formatação final solicitada:
+            # Destaca em negrito as palavras "De" e "Para" (case insensitive)
+            observacao_formatada = re.sub(r'\b(de)\b', r'**\1**', observacao, flags=re.IGNORECASE)
+            observacao_formatada = re.sub(r'\b(para)\b', r'**\1**', observacao_formatada, flags=re.IGNORECASE)
+
+            # Formatação HTML/Markdown com as cores solicitadas
             st.markdown(
-                f"`{data_atualizacao}` — **[{importador}]** — **{digitador}** — Ação: {observacao}", 
+                f"`{data_atualizacao}` — **[{importador}]** — **{digitador}** — "
+                f"<span style='color: red; font-weight: bold;'>Ação:</span> {observacao_formatada} — "
+                f"Referência: <span style='color: #1E90FF; font-weight: bold;'>{referencia}</span>", 
                 unsafe_allow_html=True
             )
     else:
