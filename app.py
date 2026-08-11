@@ -498,7 +498,7 @@ if not df_logs_periodo.empty:
                 st.bar_chart(df_sheet_logs["referencia"].value_counts().head(10))
 else:
     st.info("Nenhuma atividade registrada no período selecionado.")
-
+    
 # -- LOG ATIVIDADES ---
 st.subheader("🪵 Log de Atividades dos Digitadores")
 
