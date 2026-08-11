@@ -563,12 +563,31 @@ log_container = st.container(height=380, border=True)
 with log_container:
     if filtered_logs:
         for entry in filtered_logs:
+            # 1. Pega a Data e Hora (prioriza a coluna de atualização, senão o timestamp do log)
             data_atualizacao = entry.get('data_atualizacao', entry.get('timestamp', ''))
-            importador = entry.get('importador', '')
-            digitador = entry.get('digitador', '')
-            observacao = entry.get('observacao', entry.get('mensagem', ''))
             
-            # Formatação solicitada
+            # 2. Pega a chave 'importador' se existir, senão extrai do texto via Regex
+            importador = entry.get('importador', '')
+            if not importador:
+                match_imp = re.search(r'Importador:\s*([^|]+)', entry.get('mensagem', ''))
+                importador = match_imp.group(1).strip() if match_imp else 'N/A'
+            
+            # 3. Pega o Digitador
+            digitador = entry.get('digitador', '')
+            
+            # 4. Trata a OBSERVAÇÃO/AÇÃO para extrair apenas a mudança limpa
+            msg_raw = entry.get('observacao', entry.get('mensagem', ''))
+            
+            # Procura por "Obs: ..." ao final do texto para pegar a ação limpa
+            match_obs = re.search(r'Obs:\s*(.*)', msg_raw)
+            if match_obs:
+                observacao = match_obs.group(1).strip()
+            else:
+                # Caso não tenha "Obs:", limpa o trecho "Renan Veloso alterou o campo..."
+                observacao = re.sub(r"^.*?alterou o campo 'OBSERVAÇÃO' de '-' para '", "", msg_raw)
+                observacao = re.sub(r"' na Referência.*$", "", observacao).strip()
+
+            # Formatação final solicitada:
             st.markdown(
                 f"`{data_atualizacao}` — **[{importador}]** — **{digitador}** — Ação: {observacao}", 
                 unsafe_allow_html=True
