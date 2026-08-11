@@ -109,14 +109,37 @@ def load_logs_by_period(start_date: date, end_date: date):
         st.error(f"Erro ao buscar logs do Supabase: {e}")
         return []
 
+def get_existing_timestamps_for_sheet(sheet_name: str) -> set:
+    """Busca no Supabase os timestamps/mensagens que já foram inseridos para uma determinada planilha."""
+    try:
+        response = (
+            supabase.table("atividades")
+            .select("timestamp, referencia, digitador")
+            .eq("sheet_name", sheet_name)
+            .execute()
+        )
+        if response.data:
+            # Cria um conjunto de chaves únicas a partir dos registros existentes no Supabase
+            return {
+                f"{row.get('referencia', '').strip()}_{row.get('digitador', '').strip()}_{row.get('timestamp', '').strip()}"
+                for row in response.data
+            }
+        return set()
+    except Exception as e:
+        return set()
+
 def add_log_entries_bulk(logs_list):
-    """Insere registros de atividade em lote no banco Supabase."""
+    """Insere registros de atividade em lote no banco Supabase em blocos de 500 para evitar timeout."""
     if not logs_list:
         return
-    try:
-        supabase.table("atividades").insert(logs_list).execute()
-    except Exception as e:
-        st.error(f"Erro ao salvar registros no Supabase: {e}")
+    
+    chunk_size = 500
+    for i in range(0, len(logs_list), chunk_size):
+        chunk = logs_list[i : i + chunk_size]
+        try:
+            supabase.table("atividades").insert(chunk).execute()
+        except Exception as e:
+            st.error(f"Erro ao salvar lote de registros no Supabase: {e}")
 
 # ==========================================
 # TRATAMENTO DE TEXTO E LEITURA DIRETA DA ABA LOG
@@ -134,7 +157,7 @@ def normalize_text(text: str) -> str:
     return only_ascii.upper()
 
 def process_single_sheet_update(sheet_name, uploaded_df):
-    """Lê os registros diretamente da aba 'LOG' sem comparar colunas passadas."""
+    """Lê TODOS os registros da aba 'LOG' e envia para o Supabase os que ainda não foram cadastrados."""
     
     new_columns = []
     for col in uploaded_df.columns:
@@ -168,39 +191,25 @@ def process_single_sheet_update(sheet_name, uploaded_df):
 
     uploaded_df = uploaded_df.fillna("-").astype(str)
 
-    cache_path = os.path.join(DATA_DIR, f"cache_{sheet_name.lower().replace(' ', '_')}.csv")
+    # Busca chaves que já estão salvas no Supabase para esta planilha em particular
+    existing_keys_in_db = get_existing_timestamps_for_sheet(sheet_name)
+
     new_logs = []
     now_br = get_now_br()
-    processed_keys = set()
-
-    # Se já existir cache local, carregamos as chaves das linhas já processadas
-    if os.path.exists(cache_path):
-        try:
-            prev_df = pd.read_csv(cache_path, dtype=str).fillna("-")
-            if "ROW_KEY" in prev_df.columns:
-                processed_keys = set(prev_df["ROW_KEY"].tolist())
-        except Exception:
-            processed_keys = set()
-
-    # Criar chave única para cada linha
-    uploaded_df["ROW_KEY"] = (
-        uploaded_df["REFERÊNCIA"].str.strip() + "_" +
-        uploaded_df["DIGITADOR"].str.strip() + "_" +
-        uploaded_df["DATA ATUALIZAÇÃO"].str.strip()
-    )
 
     for _, row in uploaded_df.iterrows():
-        row_key = row["ROW_KEY"]
         digitador = row.get("DIGITADOR", "-").strip()
         ref = row.get("REFERÊNCIA", "-").strip()
         data_atualizacao = row.get("DATA ATUALIZAÇÃO", "-").strip()
 
-        # Ignora linhas sem digitador ou referência válidos
+        # Ignora linhas vazias ou cabeçalhos inválidos
         if not digitador or digitador in ["-", "nan", "None"] or not ref or ref in ["-", "nan", "None"]:
             continue
 
-        # Se esta linha do LOG ainda não foi gravada no Supabase
-        if row_key not in processed_keys:
+        row_key = f"{ref}_{digitador}_{data_atualizacao}"
+
+        # Se esta linha do LOG ainda não está gravada no Supabase, adiciona para inserção
+        if row_key not in existing_keys_in_db:
             importador = row.get("IMPORTADOR", "-").strip()
             if importador in ["nan", "None", ""]:
                 importador = "-"
@@ -209,13 +218,12 @@ def process_single_sheet_update(sheet_name, uploaded_df):
             if observacao in ["nan", "None", ""]:
                 observacao = "-"
 
-            # Montagem da mensagem direto da coluna OBSERVAÇÃO vinda do Google Sheets
             msg_log = (
                 f"{data_atualizacao} — [{importador}] — {digitador} — "
                 f"Ação: {observacao} — Referência: {ref}"
             )
 
-            # Tenta converter a data da planilha (DD/MM/YYYY) para o formato YYYY-MM-DD para busca no banco
+            # Tenta converter a data da planilha (DD/MM/YYYY) para YYYY-MM-DD
             try:
                 date_part = data_atualizacao.split()[0]
                 parsed_date = datetime.strptime(date_part, "%d/%m/%Y").strftime("%Y-%m-%d")
@@ -230,12 +238,13 @@ def process_single_sheet_update(sheet_name, uploaded_df):
                 "referencia": str(ref),
                 "mensagem": msg_log
             })
+            
+            # Adiciona ao conjunto local para não duplicar se a própria planilha tiver linhas repetidas
+            existing_keys_in_db.add(row_key)
 
     if new_logs:
         add_log_entries_bulk(new_logs)
 
-    # Salva o arquivo atualizado no cache local com as chaves processadas
-    uploaded_df.to_csv(cache_path, index=False)
     return True, None
 
 def fetch_and_process_sheet(name, sheet_url, headers):
@@ -444,7 +453,6 @@ st.divider()
 total_acoes_agrupadas = 0
 
 if not df_logs_periodo.empty:
-    # 1. Identifica a coluna correta de data/hora
     col_data = None
     for candidatos in ["DATA ATUALIZAÇÃO", "timestamp", "data_atualizacao", "data_hora", "data"]:
         if candidatos in df_logs_periodo.columns:
@@ -453,24 +461,15 @@ if not df_logs_periodo.empty:
             
     col_digitador = "digitador" if "digitador" in df_logs_periodo.columns else None
 
-    # 2. Se ambas as colunas forem encontradas, faz o agrupamento por 2 min
     if col_data and col_digitador:
-        # Ordenação
         df_sorted = df_logs_periodo.sort_values(by=[col_digitador, col_data]).copy()
-        
-        # Converte para datetime (trata formatos com erros)
         df_sorted[col_data] = pd.to_datetime(df_sorted[col_data], errors="coerce")
-        
-        # Diferença de tempo em segundos
         df_sorted["diff_tempo"] = df_sorted.groupby(col_digitador)[col_data].diff()
-        
-        # Considera nova ação se interval > 120s ou se for a primeira do digitador
         df_sorted["nova_acao"] = df_sorted["diff_tempo"].isna() | (df_sorted["diff_tempo"].dt.total_seconds() > 120)
         
         total_acoes_agrupadas = int(df_sorted["nova_acao"].sum())
         df_acoes_filtradas = df_sorted[df_sorted["nova_acao"]]
     else:
-        # Métrica fallback caso o nome da coluna mude
         st.warning(
             f"⚠️ Colunas não encontradas para agrupamento. "
             f"Colunas disponíveis na tabela: `{list(df_logs_periodo.columns)}`"
@@ -518,13 +517,11 @@ else:
 st.markdown("**Histórico de Eventos:**")
 log_container = st.container(height=380, border=True)
 
-# 1. Aplica o filtro da barra de pesquisa (search_query) sobre os logs do período
 filtered_logs = []
 if logs_periodo:
     if search_query.strip():
         term = search_query.strip().lower()
         for log in logs_periodo:
-            # Busca o termo na mensagem ou nos campos individuais
             msg = str(log.get("mensagem", "")).lower()
             digitador = str(log.get("digitador", "")).lower()
             referencia = str(log.get("referencia", "")).lower()
@@ -540,17 +537,13 @@ if logs_periodo:
     else:
         filtered_logs = logs_periodo.copy()
 
-
-# 2. Função auxiliar para extrair e converter a data da mensagem/timestamp
 def obter_data_log(entry):
-    # Tenta obter pelo timestamp cadastrado
     timestamp_str = entry.get("timestamp", "")
     try:
         return datetime.strptime(timestamp_str, "%d/%m/%Y %H:%M:%S")
     except Exception:
         pass
 
-    # Caso falhe, tenta extrair via Regex do texto da mensagem
     msg = entry.get("mensagem", "")
     match = re.search(r"^(\d{2}/\d{2}/\d{4}\s\d{2}:\d{2}:\d{2})", msg)
     if match:
@@ -561,28 +554,23 @@ def obter_data_log(entry):
 
     return datetime.min
 
-
-# 3. Ordena do registro mais recente para o mais antigo
 logs_ordenados = (
     sorted(filtered_logs, key=obter_data_log, reverse=True)
     if filtered_logs
     else []
 )
 
-# 4. Renderização dos logs formatados
 with log_container:
     if logs_ordenados:
         for entry in logs_ordenados:
             mensagem = entry.get("mensagem", "")
 
-            # Destaca a data/hora no início da string (Ex: 11/08/2026 14:30:00)
             mensagem_formatada = re.sub(
                 r"^(\d{2}/\d{2}/\d{4}\s\d{2}:\d{2}:\d{2})",
                 r"<span style='color: #008000 !important; background-color: #e0e0e0; padding: 3px 8px; border-radius: 4px; font-weight: bold; display: inline-block;'>\1</span>",
                 mensagem,
             )
 
-            # Destaca palavras "de" e "para"
             mensagem_formatada = re.sub(
                 r"\b(de)\b", r"**\1**", mensagem_formatada, flags=re.IGNORECASE
             )
@@ -590,7 +578,6 @@ with log_container:
                 r"\b(para)\b", r"**\1**", mensagem_formatada, flags=re.IGNORECASE
             )
 
-            # Destaca Ação e Referência
             mensagem_formatada = re.sub(
                 r"Ação:\s*(.*?)\s*—\s*Referência:\s*(.*)$",
                 r"<span style='color: red; font-weight: bold;'>Ação:</span> \1 — Referência: <span style='color: #1E90FF; font-weight: bold;'>\2</span>",
