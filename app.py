@@ -444,23 +444,39 @@ st.divider()
 total_acoes_agrupadas = 0
 
 if not df_logs_periodo.empty:
-    # 1. Ordenação por digitador e pela coluna DATA ATUALIZAÇÃO
-    df_sorted = df_logs_periodo.sort_values(by=["digitador", "DATA ATUALIZAÇÃO"]).copy()
-    
-    # 2. Converter a coluna DATA ATUALIZAÇÃO para datetime
-    df_sorted["DATA ATUALIZAÇÃO"] = pd.to_datetime(df_sorted["DATA ATUALIZAÇÃO"], errors="coerce")
-    
-    # 3. Calcular a diferença de tempo entre ações consecutivas do mesmo digitador
-    df_sorted["diff_tempo"] = df_sorted.groupby("digitador")["DATA ATUALIZAÇÃO"].diff()
-    
-    # 4. Considera "nova ação" se for a primeira do digitador (NaT) ou se o intervalo for > 2 minutos (120 seg)
-    df_sorted["nova_acao"] = df_sorted["diff_tempo"].isna() | (df_sorted["diff_tempo"].dt.total_seconds() > 120)
-    
-    # 5. Total de ações agrupadas no período
-    total_acoes_agrupadas = int(df_sorted["nova_acao"].sum())
-    
-    # 6. Filtrar apenas as linhas consideradas "novas ações" para os gráficos agrupados
-    df_acoes_filtradas = df_sorted[df_sorted["nova_acao"]]
+    # 1. Identifica a coluna correta de data/hora
+    col_data = None
+    for candidatos in ["DATA ATUALIZAÇÃO", "timestamp", "data_atualizacao", "data_hora", "data"]:
+        if candidatos in df_logs_periodo.columns:
+            col_data = candidatos
+            break
+            
+    col_digitador = "digitador" if "digitador" in df_logs_periodo.columns else None
+
+    # 2. Se ambas as colunas forem encontradas, faz o agrupamento por 2 min
+    if col_data and col_digitador:
+        # Ordenação
+        df_sorted = df_logs_periodo.sort_values(by=[col_digitador, col_data]).copy()
+        
+        # Converte para datetime (trata formatos com erros)
+        df_sorted[col_data] = pd.to_datetime(df_sorted[col_data], errors="coerce")
+        
+        # Diferença de tempo em segundos
+        df_sorted["diff_tempo"] = df_sorted.groupby(col_digitador)[col_data].diff()
+        
+        # Considera nova ação se interval > 120s ou se for a primeira do digitador
+        df_sorted["nova_acao"] = df_sorted["diff_tempo"].isna() | (df_sorted["diff_tempo"].dt.total_seconds() > 120)
+        
+        total_acoes_agrupadas = int(df_sorted["nova_acao"].sum())
+        df_acoes_filtradas = df_sorted[df_sorted["nova_acao"]]
+    else:
+        # Métrica fallback caso o nome da coluna mude
+        st.warning(
+            f"⚠️ Colunas não encontradas para agrupamento. "
+            f"Colunas disponíveis na tabela: `{list(df_logs_periodo.columns)}`"
+        )
+        total_acoes_agrupadas = len(df_logs_periodo)
+        df_acoes_filtradas = df_logs_periodo.copy()
 
 # --- ESTATÍSTICAS BASEADAS NO PERÍODO SELECIONADO ---
 st.subheader(f"📈 Estatísticas no Período ({dt_inicio.strftime('%d/%m/%Y')} a {dt_fim.strftime('%d/%m/%Y')})")
@@ -479,7 +495,6 @@ if not df_logs_periodo.empty:
         c1, c2 = st.columns(2)
         with c1:
             st.markdown("**Atividades por Digitador (Geral)**")
-            # Exibe contagem ajustada pela regra dos 2 minutos
             st.bar_chart(df_acoes_filtradas["digitador"].value_counts())
         with c2:
             st.markdown("**Atividades por Planilha**")
