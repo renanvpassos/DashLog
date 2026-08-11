@@ -444,23 +444,39 @@ st.divider()
 total_acoes_agrupadas = 0
 
 if not df_logs_periodo.empty:
-    # 1. Ordenação por digitador e pela coluna DATA ATUALIZAÇÃO
-    df_sorted = df_logs_periodo.sort_values(by=["digitador", "DATA ATUALIZAÇÃO"]).copy()
-    
-    # 2. Converter a coluna DATA ATUALIZAÇÃO para datetime
-    df_sorted["DATA ATUALIZAÇÃO"] = pd.to_datetime(df_sorted["DATA ATUALIZAÇÃO"], errors="coerce")
-    
-    # 3. Calcular a diferença de tempo entre ações consecutivas do mesmo digitador
-    df_sorted["diff_tempo"] = df_sorted.groupby("digitador")["DATA ATUALIZAÇÃO"].diff()
-    
-    # 4. Considera "nova ação" se for a primeira do digitador (NaT) ou se o intervalo for > 2 minutos (120 seg)
-    df_sorted["nova_acao"] = df_sorted["diff_tempo"].isna() | (df_sorted["diff_tempo"].dt.total_seconds() > 120)
-    
-    # 5. Total de ações agrupadas no período
-    total_acoes_agrupadas = int(df_sorted["nova_acao"].sum())
-    
-    # 6. Filtrar apenas as linhas consideradas "novas ações" para os gráficos agrupados
-    df_acoes_filtradas = df_sorted[df_sorted["nova_acao"]]
+    # 1. Identifica a coluna correta de data/hora
+    col_data = None
+    for candidatos in ["DATA ATUALIZAÇÃO", "timestamp", "data_atualizacao", "data_hora", "data"]:
+        if candidatos in df_logs_periodo.columns:
+            col_data = candidatos
+            break
+            
+    col_digitador = "digitador" if "digitador" in df_logs_periodo.columns else None
+
+    # 2. Se ambas as colunas forem encontradas, faz o agrupamento por 2 min
+    if col_data and col_digitador:
+        # Ordenação
+        df_sorted = df_logs_periodo.sort_values(by=[col_digitador, col_data]).copy()
+        
+        # Converte para datetime (trata formatos com erros)
+        df_sorted[col_data] = pd.to_datetime(df_sorted[col_data], errors="coerce")
+        
+        # Diferença de tempo em segundos
+        df_sorted["diff_tempo"] = df_sorted.groupby(col_digitador)[col_data].diff()
+        
+        # Considera nova ação se interval > 120s ou se for a primeira do digitador
+        df_sorted["nova_acao"] = df_sorted["diff_tempo"].isna() | (df_sorted["diff_tempo"].dt.total_seconds() > 120)
+        
+        total_acoes_agrupadas = int(df_sorted["nova_acao"].sum())
+        df_acoes_filtradas = df_sorted[df_sorted["nova_acao"]]
+    else:
+        # Métrica fallback caso o nome da coluna mude
+        st.warning(
+            f"⚠️ Colunas não encontradas para agrupamento. "
+            f"Colunas disponíveis na tabela: `{list(df_logs_periodo.columns)}`"
+        )
+        total_acoes_agrupadas = len(df_logs_periodo)
+        df_acoes_filtradas = df_logs_periodo.copy()
 
 # --- ESTATÍSTICAS BASEADAS NO PERÍODO SELECIONADO ---
 st.subheader(f"📈 Estatísticas no Período ({dt_inicio.strftime('%d/%m/%Y')} a {dt_fim.strftime('%d/%m/%Y')})")
@@ -479,7 +495,6 @@ if not df_logs_periodo.empty:
         c1, c2 = st.columns(2)
         with c1:
             st.markdown("**Atividades por Digitador (Geral)**")
-            # Exibe contagem ajustada pela regra dos 2 minutos
             st.bar_chart(df_acoes_filtradas["digitador"].value_counts())
         with c2:
             st.markdown("**Atividades por Planilha**")
@@ -498,90 +513,3 @@ if not df_logs_periodo.empty:
                 st.bar_chart(df_sheet_logs["referencia"].value_counts().head(10))
 else:
     st.info("Nenhuma atividade registrada no período selecionado.")
-    
-# -- LOG ATIVIDADES ---
-st.markdown("**Histórico de Eventos:**")
-log_container = st.container(height=380, border=True)
-
-# 1. Aplica o filtro da barra de pesquisa (search_query) sobre os logs do período
-filtered_logs = []
-if logs_periodo:
-    if search_query.strip():
-        term = search_query.strip().lower()
-        for log in logs_periodo:
-            # Busca o termo na mensagem ou nos campos individuais
-            msg = str(log.get("mensagem", "")).lower()
-            digitador = str(log.get("digitador", "")).lower()
-            referencia = str(log.get("referencia", "")).lower()
-            sheet = str(log.get("sheet_name", "")).lower()
-
-            if (
-                term in msg
-                or term in digitador
-                or term in referencia
-                or term in sheet
-            ):
-                filtered_logs.append(log)
-    else:
-        filtered_logs = logs_periodo.copy()
-
-
-# 2. Função auxiliar para extrair e converter a data da mensagem/timestamp
-def obter_data_log(entry):
-    # Tenta obter pelo timestamp cadastrado
-    timestamp_str = entry.get("timestamp", "")
-    try:
-        return datetime.strptime(timestamp_str, "%d/%m/%Y %H:%M:%S")
-    except Exception:
-        pass
-
-    # Caso falhe, tenta extrair via Regex do texto da mensagem
-    msg = entry.get("mensagem", "")
-    match = re.search(r"^(\d{2}/\d{2}/\d{4}\s\d{2}:\d{2}:\d{2})", msg)
-    if match:
-        try:
-            return datetime.strptime(match.group(1), "%d/%m/%Y %H:%M:%S")
-        except Exception:
-            pass
-
-    return datetime.min
-
-
-# 3. Ordena do registro mais recente para o mais antigo
-logs_ordenados = (
-    sorted(filtered_logs, key=obter_data_log, reverse=True)
-    if filtered_logs
-    else []
-)
-
-# 4. Renderização dos logs formatados
-with log_container:
-    if logs_ordenados:
-        for entry in logs_ordenados:
-            mensagem = entry.get("mensagem", "")
-
-            # Destaca a data/hora no início da string (Ex: 11/08/2026 14:30:00)
-            mensagem_formatada = re.sub(
-                r"^(\d{2}/\d{2}/\d{4}\s\d{2}:\d{2}:\d{2})",
-                r"<span style='color: #008000 !important; background-color: #e0e0e0; padding: 3px 8px; border-radius: 4px; font-weight: bold; display: inline-block;'>\1</span>",
-                mensagem,
-            )
-
-            # Destaca palavras "de" e "para"
-            mensagem_formatada = re.sub(
-                r"\b(de)\b", r"**\1**", mensagem_formatada, flags=re.IGNORECASE
-            )
-            mensagem_formatada = re.sub(
-                r"\b(para)\b", r"**\1**", mensagem_formatada, flags=re.IGNORECASE
-            )
-
-            # Destaca Ação e Referência
-            mensagem_formatada = re.sub(
-                r"Ação:\s*(.*?)\s*—\s*Referência:\s*(.*)$",
-                r"<span style='color: red; font-weight: bold;'>Ação:</span> \1 — Referência: <span style='color: #1E90FF; font-weight: bold;'>\2</span>",
-                mensagem_formatada,
-            )
-
-            st.markdown(mensagem_formatada, unsafe_allow_html=True)
-    else:
-        st.write("Nenhum registro encontrado para os filtros selecionados.")
