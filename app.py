@@ -22,10 +22,6 @@ def get_now_br() -> datetime:
     """Retorna o datetime atual no fuso de Brasília."""
     return datetime.now(TZ_BR)
 
-st.title("📊 Monitor Operacional em Tempo Real")
-st.caption(f"Monitorando **{len(LISTA_PLANILHAS)}** planilha(s) configurada(s) — dados lidos da aba **'{NOME_ABA_LOG}'**. *(Atenção: Atualiza automaticamente a cada 20 segundos)*")
-st.divider() 
-
 # ---------------------------------------------------------
 # AUTOMAÇÃO: Recarrega/Executa a cada 20 segundos (20.000ms)
 # ---------------------------------------------------------
@@ -67,7 +63,7 @@ def convert_to_gviz_url(url: str, sheet_name: str = NOME_ABA_LOG) -> str:
 # ==========================================
 LISTA_PLANILHAS = {
     f"PLANILHA {nome.replace('_', ' ')}": f"https://docs.google.com/spreadsheets/d/{sheet_id}"
-    for nome, sheet_id in st.secrets["planilhas"].items()
+    for nome, sheet_id in st.secrets.get("planilhas", {}).items()
 }
 
 DATA_DIR = "data"
@@ -102,13 +98,12 @@ def get_existing_timestamps_for_sheet(sheet_name: str) -> set:
             .execute()
         )
         if response.data:
-            # Cria um conjunto de chaves únicas a partir dos registros existentes no Supabase
             return {
                 f"{row.get('referencia', '').strip()}_{row.get('digitador', '').strip()}_{row.get('timestamp', '').strip()}"
                 for row in response.data
             }
         return set()
-    except Exception as e:
+    except Exception:
         return set()
 
 def add_log_entries_bulk(logs_list):
@@ -174,7 +169,6 @@ def process_single_sheet_update(sheet_name, uploaded_df):
 
     uploaded_df = uploaded_df.fillna("-").astype(str)
 
-    # Busca chaves que já estão salvas no Supabase para esta planilha em particular
     existing_keys_in_db = get_existing_timestamps_for_sheet(sheet_name)
 
     new_logs = []
@@ -185,13 +179,11 @@ def process_single_sheet_update(sheet_name, uploaded_df):
         ref = row.get("REFERÊNCIA", "-").strip()
         data_atualizacao = row.get("DATA ATUALIZAÇÃO", "-").strip()
 
-        # Ignora linhas vazias ou cabeçalhos inválidos
         if not digitador or digitador in ["-", "nan", "None"] or not ref or ref in ["-", "nan", "None"]:
             continue
 
         row_key = f"{ref}_{digitador}_{data_atualizacao}"
 
-        # Se esta linha do LOG ainda não está gravada no Supabase, adiciona para inserção
         if row_key not in existing_keys_in_db:
             importador = row.get("IMPORTADOR", "-").strip()
             if importador in ["nan", "None", ""]:
@@ -206,7 +198,6 @@ def process_single_sheet_update(sheet_name, uploaded_df):
                 f"Ação: {observacao} — Referência: {ref}"
             )
 
-            # Tenta converter a data da planilha (DD/MM/YYYY) para YYYY-MM-DD
             try:
                 date_part = data_atualizacao.split()[0]
                 parsed_date = datetime.strptime(date_part, "%d/%m/%Y").strftime("%Y-%m-%d")
@@ -222,7 +213,6 @@ def process_single_sheet_update(sheet_name, uploaded_df):
                 "mensagem": msg_log
             })
             
-            # Adiciona ao conjunto local para não duplicar se a própria planilha tiver linhas repetidas
             existing_keys_in_db.add(row_key)
 
     if new_logs:
@@ -390,9 +380,16 @@ with st.spinner("Sincronizando planilhas em segundo plano..."):
     qtd_sucesso = executar_sincronizacao()
 
 # ==========================================
-# PAINEL PRINCIPAL
+# PAINEL PRINCIPAL COM LOGO NO CANTO SUPERIOR DIREITO
 # ==========================================
-st.title("📊 Monitor Operacional em Tempo Real")
+col_titulo, col_logo = st.columns([0.8, 0.2], vertical_alignment="center")
+
+with col_titulo:
+    st.title("📊 Monitor Operacional em Tempo Real")
+
+with col_logo:
+    st.image("logoMult.png", use_container_width=True)
+
 st.caption(f"Monitorando **{len(LISTA_PLANILHAS)}** planilha(s) configurada(s) — dados lidos da aba **'{NOME_ABA_LOG}'**. *(Atenção: Atualiza automaticamente a cada 20 segundos)*")
 
 st.divider()
