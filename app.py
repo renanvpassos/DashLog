@@ -175,74 +175,72 @@ def process_single_sheet_update(sheet_name, uploaded_df):
     now_br = get_now_br()
     warning_msg = None
 
+    # Correção da indentação do bloco 'if' e 'try'
     if os.path.exists(cache_path):
-    try:
-        previous_df = pd.read_csv(cache_path, dtype=str).fillna("-")
-        previous_df = previous_df.drop_duplicates(subset=["REFERÊNCIA"], keep="last")
-        
-        prev_indexed = previous_df.set_index("REFERÊNCIA")
-        curr_indexed = uploaded_df.set_index("REFERÊNCIA")
+        try:
+            previous_df = pd.read_csv(cache_path, dtype=str).fillna("-")
+            previous_df = previous_df.drop_duplicates(subset=["REFERÊNCIA"], keep="last")
+            
+            prev_indexed = previous_df.set_index("REFERÊNCIA")
+            curr_indexed = uploaded_df.set_index("REFERÊNCIA")
 
-        common_refs = curr_indexed.index.intersection(prev_indexed.index)
-        for ref in common_refs:
-            row_prev = prev_indexed.loc[ref]
-            row_curr = curr_indexed.loc[ref]
+            common_refs = curr_indexed.index.intersection(prev_indexed.index)
+            for ref in common_refs:
+                row_prev = prev_indexed.loc[ref]
+                row_curr = curr_indexed.loc[ref]
 
-            digitador = str(row_curr.get("DIGITADOR", "")).strip()
+                digitador = str(row_curr.get("DIGITADOR", "")).strip()
 
-            if digitador and digitador not in ["-", "nan", "None"]:
-                # Busca as colunas auxiliares
-                importador = str(row_curr.get("IMPORTADOR", "-")).strip()
-                if importador in ["nan", "None", ""]:
-                    importador = "-"
+                if digitador and digitador not in ["-", "nan", "None"]:
+                    importador = str(row_curr.get("IMPORTADOR", "-")).strip()
+                    if importador in ["nan", "None", ""]:
+                        importador = "-"
 
-                data_atualizacao = str(row_curr.get("DATA ATUALIZAÇÃO", "-")).strip()
-                if data_atualizacao in ["nan", "None", ""]:
-                    data_atualizacao = "-"
+                    data_atualizacao = str(row_curr.get("DATA ATUALIZAÇÃO", "-")).strip()
+                    if data_atualizacao in ["nan", "None", ""]:
+                        data_atualizacao = "-"
 
-                observacao = str(row_curr.get("OBSERVAÇÃO", "-")).strip()
-                if observacao in ["nan", "None", ""]:
-                    observacao = "-"
+                    observacao = str(row_curr.get("OBSERVAÇÃO", "-")).strip()
+                    if observacao in ["nan", "None", ""]:
+                        observacao = "-"
 
-                # Ignorar as colunas da aba LOG na verificação de alterações
-                ignored_cols = [
-                    "DATA ATUALIZACAO", "DATA ATUALIZAÇÃO",
-                    "IMPORTADOR",
-                    "OBSERVACAO", "OBSERVAÇÃO"
-                ]
+                    ignored_cols = [
+                        "DATA ATUALIZACAO", "DATA ATUALIZAÇÃO",
+                        "IMPORTADOR",
+                        "OBSERVACAO", "OBSERVAÇÃO"
+                    ]
 
-                for col in curr_indexed.columns:
-                    col_norm = normalize_text(col)
+                    for col in curr_indexed.columns:
+                        col_norm = normalize_text(col)
 
-                    # Pula colunas informativas/metadados
-                    if col_norm in ignored_cols:
-                        continue
+                        if col_norm in ignored_cols:
+                            continue
 
-                    val_old = str(row_prev.get(col, "-")).strip()
-                    val_new = str(row_curr.get(col, "-")).strip()
+                        val_old = str(row_prev.get(col, "-")).strip()
+                        val_new = str(row_curr.get(col, "-")).strip()
 
-                    if val_old != val_new:
-                        if col_norm in ["STATUS", "SITUACAO"]:
-                            acao = f"alterou o status de '{val_old}' para '{val_new}'"
-                        else:
-                            acao = f"alterou o campo '{col}' de '{val_old}' para '{val_new}'"
-                        
-                        msg_log = (
-                            f"[{sheet_name}] {digitador} {acao} na Referência {ref} | "
-                            f"Importador: {importador} | Data Atualização: {data_atualizacao} | Obs: {observacao}"
-                        )
+                        if val_old != val_new:
+                            if col_norm in ["STATUS", "SITUACAO"]:
+                                acao = f"alterou o status de '{val_old}' para '{val_new}'"
+                            else:
+                                acao = f"alterou o campo '{col}' de '{val_old}' para '{val_new}'"
+                            
+                            msg_log = (
+                                f"[{sheet_name}] {digitador} {acao} na Referência {ref} | "
+                                f"Importador: {importador} | Data Atualização: {data_atualizacao} | Obs: {observacao}"
+                            )
 
-                        new_logs.append({
-                            "timestamp": now_br.strftime("%d/%m/%Y %H:%M:%S"),
-                            "date": now_br.strftime("%Y-%m-%d"),
-                            "sheet_name": str(sheet_name),
-                            "digitador": str(digitador),
-                            "referencia": str(ref),
-                            "mensagem": msg_log
-                        })
+                            new_logs.append({
+                                "timestamp": now_br.strftime("%d/%m/%Y %H:%M:%S"),
+                                "date": now_br.strftime("%Y-%m-%d"),
+                                "sheet_name": str(sheet_name),
+                                "digitador": str(digitador),
+                                "referencia": str(ref),
+                                "mensagem": msg_log
+                            })
 
-    except Exception as e:
-        warning_msg = f"⚠️ Erro ao comparar alterações da planilha '{sheet_name}': {e}"
+        except Exception as e:
+            warning_msg = f"⚠️ Erro ao comparar alterações da planilha '{sheet_name}': {e}"
 
     if new_logs:
         add_log_entries_bulk(new_logs)
