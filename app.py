@@ -19,7 +19,7 @@ from streamlit_autorefresh import st_autorefresh
 TZ_BR = ZoneInfo("America/Sao_Paulo")
 
 def get_now_br() -> datetime:
-    """Retorna o datetime atual formatado no fuso de Brasília."""
+    """Retorna o datetime atual no fuso de Brasília."""
     return datetime.now(TZ_BR)
 
 st.set_page_config(
@@ -58,7 +58,7 @@ def extract_spreadsheet_id(url: str) -> str:
     return match.group(1) if match else None
 
 def convert_to_gviz_url(url: str, sheet_name: str = NOME_ABA_LOG) -> str:
-    """Converte a URL do Google Sheets para o endpoint GViz que consulta diretamente pelo nome da aba."""
+    """Converte a URL do Google Sheets para o endpoint GViz diretamente pelo nome da aba."""
     sheet_id = extract_spreadsheet_id(url)
     if not sheet_id:
         return url
@@ -119,12 +119,11 @@ def add_log_entries_bulk(logs_list):
         st.error(f"Erro ao salvar registros no Supabase: {e}")
 
 # ==========================================
-# TRATAMENTO DE TEXTO E COMPARADOR DE PLANILHAS
+# TRATAMENTO DE TEXTO E LEITURA DIRETA DA ABA LOG
 # ==========================================
 def normalize_text(text: str) -> str:
-    """Remove acentos, caracteres corrompidos (Mojibake), espaços extras e converte para maiúsculo."""
+    """Remove acentos, caracteres corrompidos, espaços extras e converte para maiúsculo."""
     text_str = str(text).strip()
-    
     try:
         text_str = text_str.encode('latin1').decode('utf-8')
     except (UnicodeEncodeError, UnicodeDecodeError):
@@ -135,7 +134,7 @@ def normalize_text(text: str) -> str:
     return only_ascii.upper()
 
 def process_single_sheet_update(sheet_name, uploaded_df):
-    """Processa a aba 'LOG' e lê as colunas ignorando erros de acentuação/encoding."""
+    """Lê os registros diretamente da aba 'LOG' sem comparar colunas passadas."""
     
     new_columns = []
     for col in uploaded_df.columns:
@@ -157,7 +156,7 @@ def process_single_sheet_update(sheet_name, uploaded_df):
             
     uploaded_df.columns = new_columns
 
-    req_cols = ["REFERÊNCIA", "DIGITADOR"]
+    req_cols = ["REFERÊNCIA", "DIGITADOR", "DATA ATUALIZAÇÃO"]
     missing = [col for col in req_cols if col not in uploaded_df.columns]
     
     if missing:
@@ -168,86 +167,76 @@ def process_single_sheet_update(sheet_name, uploaded_df):
         return False, erro
 
     uploaded_df = uploaded_df.fillna("-").astype(str)
-    uploaded_df = uploaded_df.drop_duplicates(subset=["REFERÊNCIA"], keep="last")
 
     cache_path = os.path.join(DATA_DIR, f"cache_{sheet_name.lower().replace(' ', '_')}.csv")
     new_logs = []
     now_br = get_now_br()
-    warning_msg = None
+    processed_keys = set()
 
+    # Se já existir cache local, carregamos as chaves das linhas já processadas
     if os.path.exists(cache_path):
         try:
-            previous_df = pd.read_csv(cache_path, dtype=str).fillna("-")
-            previous_df = previous_df.drop_duplicates(subset=["REFERÊNCIA"], keep="last")
-            
-            prev_indexed = previous_df.set_index("REFERÊNCIA")
-            curr_indexed = uploaded_df.set_index("REFERÊNCIA")
+            prev_df = pd.read_csv(cache_path, dtype=str).fillna("-")
+            if "ROW_KEY" in prev_df.columns:
+                processed_keys = set(prev_df["ROW_KEY"].tolist())
+        except Exception:
+            processed_keys = set()
 
-            common_refs = curr_indexed.index.intersection(prev_indexed.index)
-            for ref in common_refs:
-                row_prev = prev_indexed.loc[ref]
-                row_curr = curr_indexed.loc[ref]
+    # Criar chave única para cada linha
+    uploaded_df["ROW_KEY"] = (
+        uploaded_df["REFERÊNCIA"].str.strip() + "_" +
+        uploaded_df["DIGITADOR"].str.strip() + "_" +
+        uploaded_df["DATA ATUALIZAÇÃO"].str.strip()
+    )
 
-                digitador = str(row_curr.get("DIGITADOR", "")).strip()
+    for _, row in uploaded_df.iterrows():
+        row_key = row["ROW_KEY"]
+        digitador = row.get("DIGITADOR", "-").strip()
+        ref = row.get("REFERÊNCIA", "-").strip()
+        data_atualizacao = row.get("DATA ATUALIZAÇÃO", "-").strip()
 
-                if digitador and digitador not in ["-", "nan", "None"]:
-                    importador = str(row_curr.get("IMPORTADOR", "-")).strip()
-                    if importador in ["nan", "None", ""]:
-                        importador = "-"
+        # Ignora linhas sem digitador ou referência válidos
+        if not digitador or digitador in ["-", "nan", "None"] or not ref or ref in ["-", "nan", "None"]:
+            continue
 
-                    data_atualizacao = str(row_curr.get("DATA ATUALIZAÇÃO", "-")).strip()
-                    if data_atualizacao in ["nan", "None", ""]:
-                        data_atualizacao = now_br.strftime("%d/%m/%Y %H:%M:%S")
+        # Se esta linha do LOG ainda não foi gravada no Supabase
+        if row_key not in processed_keys:
+            importador = row.get("IMPORTADOR", "-").strip()
+            if importador in ["nan", "None", ""]:
+                importador = "-"
 
-                    observacao = str(row_curr.get("OBSERVAÇÃO", "-")).strip()
-                    if observacao in ["nan", "None", ""]:
-                        observacao = "-"
+            observacao = row.get("OBSERVAÇÃO", "-").strip()
+            if observacao in ["nan", "None", ""]:
+                observacao = "-"
 
-                    ignored_cols = [
-                        "DATA ATUALIZACAO", "DATA ATUALIZAÇÃO",
-                        "IMPORTADOR",
-                        "OBSERVACAO", "OBSERVAÇÃO"
-                    ]
+            # Montagem da mensagem direto da coluna OBSERVAÇÃO vinda do Google Sheets
+            msg_log = (
+                f"{data_atualizacao} — [{importador}] — {digitador} — "
+                f"Ação: {observacao} — Referência: {ref}"
+            )
 
-                    for col in curr_indexed.columns:
-                        col_norm = normalize_text(col)
+            # Tenta converter a data da planilha (DD/MM/YYYY) para o formato YYYY-MM-DD para busca no banco
+            try:
+                date_part = data_atualizacao.split()[0]
+                parsed_date = datetime.strptime(date_part, "%d/%m/%Y").strftime("%Y-%m-%d")
+            except Exception:
+                parsed_date = now_br.strftime("%Y-%m-%d")
 
-                        if col_norm in ignored_cols:
-                            continue
-
-                        val_old = str(row_prev.get(col, "-")).strip()
-                        val_new = str(row_curr.get(col, "-")).strip()
-
-                        if val_old != val_new:
-                            # Montagem do padrão de Ação exigido:
-                            # Ação: na coluna {col}: '{val_old}' de '-' para '{observacao}'
-                            if observacao != "-":
-                                acao_str = f"na coluna {col}: '{val_old}' de '-' para '{observacao}'"
-                            else:
-                                acao_str = f"alterou a coluna {col} de '{val_old}' para '{val_new}'"
-
-                            msg_log = (
-                                f"{data_atualizacao} — [{importador}] — {digitador} — "
-                                f"Ação: {acao_str} — Referência: {ref}"
-                            )
-
-                            new_logs.append({
-                                "timestamp": data_atualizacao,
-                                "date": now_br.strftime("%Y-%m-%d"),
-                                "sheet_name": str(sheet_name),
-                                "digitador": str(digitador),
-                                "referencia": str(ref),
-                                "mensagem": msg_log
-                            })
-
-        except Exception as e:
-            warning_msg = f"⚠️ Erro ao comparar alterações da planilha '{sheet_name}': {e}"
+            new_logs.append({
+                "timestamp": data_atualizacao,
+                "date": parsed_date,
+                "sheet_name": str(sheet_name),
+                "digitador": str(digitador),
+                "referencia": str(ref),
+                "mensagem": msg_log
+            })
 
     if new_logs:
         add_log_entries_bulk(new_logs)
 
+    # Salva o arquivo atualizado no cache local com as chaves processadas
     uploaded_df.to_csv(cache_path, index=False)
-    return True, warning_msg
+    return True, None
 
 def fetch_and_process_sheet(name, sheet_url, headers):
     try:
