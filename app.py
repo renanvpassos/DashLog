@@ -451,7 +451,7 @@ if not df_logs_periodo.empty:
         df_logs_periodo.groupby("referencia")["dt_temp"].diff().dt.total_seconds() / 60.0
     )
     
-    df_logs_periodo["nova_acao"] = df_logs_periodo["diff_minutos"].isna() | (df_logs_periodo["diff_minutos"] >= 5.0)
+    df_logs_periodo["nova_acao"] = df_logs_periodo["diff_minutos"].isna() | (df_logs_periodo["diff_minutos"] >= 1.0)
     total_acoes_agrupadas = int(df_logs_periodo["nova_acao"].sum())
 
 # --- ESTATÍSTICAS BASEADAS NO PERÍODO SELECIONADO ---
