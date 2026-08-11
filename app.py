@@ -563,7 +563,15 @@ log_container = st.container(height=380, border=True)
 with log_container:
     if filtered_logs:
         for entry in filtered_logs:
-            msg_destacada = highlight_log_message(entry['mensagem'])
-            st.markdown(f"`{entry['timestamp']}` — **{msg_destacada}**", unsafe_allow_html=True)
+            data_atualizacao = entry.get('data_atualizacao', entry.get('timestamp', ''))
+            importador = entry.get('importador', '')
+            digitador = entry.get('digitador', '')
+            observacao = entry.get('observacao', entry.get('mensagem', ''))
+            
+            # Formatação solicitada
+            st.markdown(
+                f"`{data_atualizacao}` — **[{importador}]** — **{digitador}** — Ação: {observacao}", 
+                unsafe_allow_html=True
+            )
     else:
         st.write("Nenhum registro encontrado para os filtros selecionados.")
