@@ -152,10 +152,12 @@ def process_single_sheet_update(sheet_name, uploaded_df):
         
         if norm_col.startswith("DIGITADOR"):
             new_columns.append("DIGITADOR")
-        elif norm_col.startswith("REFERENCIA"):
+        elif norm_col.startswith("REFERÊNCIA"):
             new_columns.append("REFERÊNCIA")
         elif norm_col.startswith("IMPORTADOR"):
             new_columns.append("IMPORTADOR")
+        elif norm_col.startswith("OBSERVAÇÃO"):
+        new_columns.append("OBSERVAÇÃO")
         else:
             new_columns.append(col_str)
             
@@ -202,10 +204,6 @@ def process_single_sheet_update(sheet_name, uploaded_df):
 
                     for col in curr_indexed.columns:
                         col_norm = normalize_text(col)
-
-                        # 🛑 TRAVA: Ignora alterações se a coluna for "DATA ATUALIZAÇÃO"
-                        if "DATA ATUALIZACAO" in col_norm or "DATA DA ATUALIZACAO" in col_norm:
-                            continue
 
                         val_old = row_prev.get(col, "-")
                         val_new = row_curr.get(col, "-")
