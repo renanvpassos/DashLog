@@ -50,9 +50,6 @@ supabase = init_supabase()
 # ==========================================
 # CONVERSOR DE LINK (Google Sheets para GViz CSV)
 # ==========================================
-# 🎯 Nome fixo da aba de onde TODOS os dados devem ser extraídos.
-# Todas as planilhas cadastradas em LISTA_PLANILHAS devem possuir
-# uma aba com exatamente este nome.
 NOME_ABA_LOG = "LOG"
 
 def extract_spreadsheet_id(url: str) -> str:
@@ -61,14 +58,10 @@ def extract_spreadsheet_id(url: str) -> str:
     return match.group(1) if match else None
 
 def convert_to_csv_url(url: str, gid: str = "0") -> str:
-    """
-    Converte a URL do Google Sheets para o formato de exportação direta CSV
-    usando o GID numérico da aba, o que permite a leitura de abas ocultas.
-    """
+    """Converte a URL do Google Sheets para formato de exportação direta CSV."""
     sheet_id = extract_spreadsheet_id(url)
     if not sheet_id:
         return url
-
     return f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
 
 # ==========================================
@@ -137,14 +130,12 @@ def normalize_text(text: str) -> str:
 
 def highlight_log_message(mensagem: str) -> str:
     """Aplica destaque de cores: valores alterados (vermelho) e referência (azul claro)."""
-    # Destaca os valores 'de' e 'para' em vermelho
     mensagem = re.sub(
         r"de '([^']*)' para '([^']*)'",
         r"de '<span style='color:#FF4B4B;font-weight:bold;'>\1</span>' "
         r"para '<span style='color:#FF4B4B;font-weight:bold;'>\2</span>'",
         mensagem
     )
-    # Destaca a referência em azul claro (funciona com ou sem o sufixo "| Importador:")
     mensagem = re.sub(
         r"(na Referência )(.+?)((?: \| Importador: .+)?)$",
         r"\1<span style='color:#5DADE2;font-weight:bold;'>\2</span>\3",
@@ -153,13 +144,7 @@ def highlight_log_message(mensagem: str) -> str:
     return mensagem
 
 def process_single_sheet_update(sheet_name, uploaded_df):
-    """
-    Processa o DataFrame lido da aba 'LOG'.
-    Retorna uma tupla (sucesso: bool, mensagem_erro: str | None).
-    NÃO chama st.* aqui dentro, pois esta função roda em threads
-    do ThreadPoolExecutor e o Streamlit não permite atualizar a UI
-    fora da thread principal (o erro seria engolido silenciosamente).
-    """
+    """Processa o DataFrame lido da aba 'LOG' e gera novos registros de alteração."""
     new_columns = []
     for col in uploaded_df.columns:
         col_str = str(col).strip()
@@ -304,94 +289,7 @@ def executar_sincronizacao():
             elif err_msg:
                 st.error(err_msg)
 
-    return sucessosdef fetch_and_process_sheet(name, sheet_info, headers):
-    """Função auxiliar para download e processamento concorrente."""
-    try:
-        url = sheet_info["url"] if isinstance(sheet_info, dict) else sheet_info
-        gid = sheet_info.get("gid", "0") if isinstance(sheet_info, dict) else "0"
-
-        csv_url = convert_to_csv_url(url, gid=gid)
-        response = requests.get(csv_url, headers=headers, timeout=15)
-        
-        if response.status_code == 200:
-            corpo = response.text.strip()
-            if corpo.startswith("<") or "google-viz-error" in corpo.lower():
-                return False, (
-                    f"❌ **'{name}'**: A resposta retornada não é um CSV válido. "
-                    f"Confirme se o GID informado para a aba '{NOME_ABA_LOG}' está correto."
-                )
-
-            df_dl = pd.read_csv(io.StringIO(response.text), dtype=str)
-            success, msg = process_single_sheet_update(name, df_dl)
-            if success:
-                return True, msg
-            return False, msg
-        elif response.status_code in (400, 404):
-            return False, f"❌ **Erro na '{name}'**: Aba ou planilha não encontrada."
-        elif response.status_code == 403:
-            return False, f"❌ **Erro 403 na '{name}'**: Acesso negado. Verifique as permissões."
-        else:
-            return False, f"❌ Erro HTTP {response.status_code} na planilha '{name}'."
-    except Exception as e:
-        return False, f"❌ Erro inesperado ao processar '{name}': {e}"
-
-def executar_sincronizacao():
-    """Executa a sincronização de todas as planilhas."""
-    sucessos = 0
-    headers = {
-        'User-Agent': (
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-            'AppleWebKit/537.36 (KHTML, like Gecko) '
-            'Chrome/120.0.0.0 Safari/537.36'
-        )
-    }
-
-    with ThreadPoolExecutor(max_workers=5) as executor:
-        futures = [
-            executor.submit(fetch_and_process_sheet, name, info, headers)
-            for name, info in LISTA_PLANILHAS.items()
-        ]
-
-        for future in as_completed(futures):
-            success, err_msg = future.result()
-            if success:
-                sucessos += 1
-            elif err_msg:
-                st.error(err_msg)
-
-    return sucessos  # 👈 A quebra de linha deve vir imediatamente aqui
-
-
-def fetch_and_process_sheet(name, sheet_info, headers):
-    """Função auxiliar para download e processamento concorrente."""
-    try:
-        url = sheet_info["url"] if isinstance(sheet_info, dict) else sheet_info
-        gid = sheet_info.get("gid", "0") if isinstance(sheet_info, dict) else "0"
-
-        csv_url = convert_to_csv_url(url, gid=gid)
-        response = requests.get(csv_url, headers=headers, timeout=15)
-        
-        if response.status_code == 200:
-            corpo = response.text.strip()
-            if corpo.startswith("<") or "google-viz-error" in corpo.lower():
-                return False, (
-                    f"❌ **'{name}'**: A resposta retornada não é um CSV válido. "
-                    f"Confirme se o GID informado para a aba '{NOME_ABA_LOG}' está correto."
-                )
-
-            df_dl = pd.read_csv(io.StringIO(response.text), dtype=str)
-            success, msg = process_single_sheet_update(name, df_dl)
-            if success:
-                return True, msg
-            return False, msg
-        elif response.status_code in (400, 404):
-            return False, f"❌ **Erro na '{name}'**: Aba ou planilha não encontrada."
-        elif response.status_code == 403:
-            return False, f"❌ **Erro 403 na '{name}'**: Acesso negado. Verifique as permissões."
-        else:
-            return False, f"❌ Erro HTTP {response.status_code} na planilha '{name}'."
-    except Exception as e:
-        return False, f"❌ Erro inesperado ao processar '{name}': {e}"
+    return sucessos
 
 # ==========================================
 # RELATÓRIO PDF (SUPORTE MULTIBYTE / LATIN-1 SAFE)
@@ -413,16 +311,12 @@ def sanitize_pdf_text(text: str) -> str:
     """Converte caracteres UTF-8 para um formato compatível com fontes padrão do FPDF."""
     return unicodedata.normalize('NFKD', str(text)).encode('latin-1', 'ignore').decode('latin-1')
 
-# Cores usadas no destaque do PDF (RGB)
 PDF_RED = (200, 30, 30)
 PDF_BLUE = (41, 128, 185)
 PDF_BLACK = (0, 0, 0)
 
 def build_pdf_segments(mensagem: str):
-    """
-    Quebra a mensagem em segmentos (texto, cor) para permitir
-    destacar 'de/para' em vermelho e a Referência em azul no PDF.
-    """
+    """Quebra a mensagem em segmentos (texto, cor) para destacar no PDF."""
     segments = []
     pattern = re.compile(
         r"de '([^']*)' para '([^']*)'"
@@ -561,7 +455,7 @@ st.divider()
 
 # --- TRATAMENTO DOS LOGS E CRIAÇÃO DO DATAFRAME ---
 if logs_periodo:
-    # 1. Filtro retroativo de 'DATA ATUALIZAÇÃO'
+    # Filtro retroativo de 'DATA ATUALIZAÇÃO'
     logs_validos = [
         log for log in logs_periodo 
         if "alterou o campo 'DATA ATUALIZAÇÃO'" not in log.get("mensagem", "") 
@@ -575,22 +469,14 @@ else:
 total_acoes_agrupadas = 0
 
 if not df_logs_periodo.empty:
-    # Converte timestamp para datetime real para comparar o tempo
     df_logs_periodo["dt_temp"] = pd.to_datetime(df_logs_periodo["timestamp"], format="%d/%m/%Y %H:%M:%S")
-    
-    # Ordena cronologicamente por referência e data/hora
     df_logs_periodo = df_logs_periodo.sort_values(by=["referencia", "dt_temp"])
     
-    # Calcula a diferença de tempo em minutos para a alteração anterior da MESMA referência
     df_logs_periodo["diff_minutos"] = (
         df_logs_periodo.groupby("referencia")["dt_temp"].diff().dt.total_seconds() / 60.0
     )
     
-    # Considera uma NOVA AÇÃO se for a 1ª vez que a referência aparece (NaN) 
-    # ou se se passaram 5 minutos ou mais (> 5.0) desde a última alteração
     df_logs_periodo["nova_acao"] = df_logs_periodo["diff_minutos"].isna() | (df_logs_periodo["diff_minutos"] >= 5.0)
-    
-    # O total de ações no período será a soma dessas 'novas ações'
     total_acoes_agrupadas = int(df_logs_periodo["nova_acao"].sum())
 
 # --- ESTATÍSTICAS BASEADAS NO PERÍODO SELECIONADO ---
@@ -599,7 +485,6 @@ st.subheader(f"📈 Estatísticas no Período ({dt_inicio.strftime('%d/%m/%Y')} 
 if not df_logs_periodo.empty:
     col_m1, col_m2, col_m3 = st.columns(3)
     
-    # 🎯 Exibe o total agrupado por janela de 5 minutos
     col_m1.metric("Ações Registradas no Período", total_acoes_agrupadas)
     col_m2.metric("Digitadores Ativos", df_logs_periodo["digitador"].nunique())
     col_m3.metric("Planilhas com Atividade", df_logs_periodo["sheet_name"].nunique())
@@ -633,10 +518,8 @@ else:
 # --- LOG DE ATIVIDADES EM TEMPO REAL ---
 st.subheader("🪵 Log de Atividades dos Digitadores")
 
-# Filtragem Adicional por Texto
 filtered_logs = []
 for log in logs_periodo:
-    # 🛑 Trava retroativa para logs já gravados na base de dados
     if "alterou o campo 'DATA ATUALIZAÇÃO'" in log.get("mensagem", "") or "alterou o campo 'DATA ATUALIZACAO'" in log.get("mensagem", ""):
         continue
 
@@ -652,7 +535,6 @@ for log in logs_periodo:
     if matches_search:
         filtered_logs.append(log)
 
-# Botão de Exportação de PDF
 if filtered_logs:
     try:
         pdf_bytes = generate_pdf(
@@ -669,7 +551,6 @@ if filtered_logs:
     except Exception as e:
         st.error(f"Erro ao gerar PDF: {e}")
 
-# Container de Logs
 st.markdown("**Histórico de Eventos:**")
 log_container = st.container(height=380, border=True)
 
