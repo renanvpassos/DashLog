@@ -13,6 +13,9 @@ from fpdf import FPDF
 from supabase import create_client, Client
 from streamlit_autorefresh import st_autorefresh
 
+# --- CONFIGURAÇÃO DA PÁGINA ---
+st.set_page_config(page_title="Sistema de Ponto Eletrônico", page_icon="⏱️", layout="centered")
+
 # ==========================================
 # CONFIGURAÇÃO DE BORDAS E ESPAÇAMENTO DO STREAMLIT
 # ==========================================
