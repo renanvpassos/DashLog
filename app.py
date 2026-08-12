@@ -14,6 +14,32 @@ from supabase import create_client, Client
 from streamlit_autorefresh import st_autorefresh
 
 # ==========================================
+# CONFIGURAÇÃO DE BORDAS E ESPAÇAMENTO DO STREAMLIT
+# ==========================================
+st.set_page_config(layout="wide")  # Garante uso da largura total da tela
+
+st.markdown(
+    """
+    <style>
+        /* Reduz o padding interno (bordas topo, laterais e fundo) da página */
+        .main .block-container {
+            padding-top: 1rem !important;
+            padding-bottom: 1rem !important;
+            padding-left: 1rem !important;
+            padding-right: 1rem !important;
+            max-width: 100% !important;
+        }
+        
+        /* Opcional: Reduz o espaço em branco no topo acima do cabeçalho */
+        header[data-testid="stHeader"] {
+            display: none;
+        }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+# ==========================================
 # CONFIGURAÇÕES DE FUSO HORÁRIO E STREAMLIT
 # ==========================================
 TZ_BR = ZoneInfo("America/Sao_Paulo")
