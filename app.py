@@ -497,7 +497,12 @@ def generate_pdf(logs_filtered, start_date, end_date) -> bytes:
             new_x="LMARGIN", new_y="NEXT"
         )
 
-    pdf.ln(4)
+    # --- LINHA SEPARADORA (efeito "meio transparente") ---
+    pdf.ln(3)
+    pdf.set_draw_color(220, 220, 220)  # cinza bem claro, simula transparência
+    pdf.set_line_width(0.3)
+    pdf.line(pdf.get_x(), pdf.get_y(), pdf.get_x() + 190, pdf.get_y())
+    pdf.ln(5)
 
     # --- CORPO: LISTA DE REGISTROS ---
     pdf.set_font("Helvetica", "", 9)
