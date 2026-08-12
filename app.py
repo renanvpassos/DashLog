@@ -499,6 +499,30 @@ def generate_pdf(logs_filtered, start_date, end_date) -> bytes:
         )
 
     pdf.ln(4)
+    pdf.set_draw_color(200, 200, 200)
+    pdf.line(pdf.get_x(), pdf.get_y(), pdf.get_x() + 190, pdf.get_y())
+    pdf.ln(4)
+
+    # --- CORPO: LISTA DE REGISTROS ---
+    pdf.set_font("Helvetica", "", 9)
+    for item in logs_filtered:
+        mensagem = item.get("mensagem", "")
+        segments = build_pdf_segments(mensagem)
+
+        for texto, cor in segments:
+            texto_limpo = sanitize_pdf_text(texto)
+            if cor:
+                pdf.set_text_color(*cor)
+            else:
+                pdf.set_text_color(*PDF_BLACK)
+            pdf.write(5, texto_limpo)
+
+        pdf.set_text_color(*PDF_BLACK)
+        pdf.ln(6)
+
+    # --- FINALIZA E RETORNA OS BYTES DO PDF ---
+    output = pdf.output()
+    return bytes(output)
 
 # ==========================================
 # TELA DE AUTENTICAÇÃO
