@@ -12,6 +12,7 @@ import streamlit as st
 from fpdf import FPDF
 from supabase import create_client, Client
 from streamlit_autorefresh import st_autorefresh
+import base64
 
 # ==========================================
 # CONFIGURAÇÃO DE BORDAS E ESPAÇAMENTO DO STREAMLIT
@@ -40,7 +41,7 @@ st.markdown(
 )
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="Monitor Operacional - Multprocessing", page_icon="📊", layout="centered")
+st.set_page_config(page_title="Monitor Operacional - Multprocessing", page_icon="📊")
 
 def exibir_intro():
     """Exibe a intro apenas com o logotipo durante o carregamento"""
