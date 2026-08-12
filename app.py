@@ -4,6 +4,7 @@ import io
 import time
 import requests
 import unicodedata
+from collections import Counter
 from datetime import datetime, date
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from zoneinfo import ZoneInfo
@@ -462,28 +463,42 @@ def generate_pdf(logs_filtered, start_date, end_date) -> bytes:
     pdf.set_font("Helvetica", "B", 11)
     pdf.cell(0, 8, sanitize_pdf_text(f"Periodo selecionado: {str_inicio} a {str_fim}"), new_x="LMARGIN", new_y="NEXT")
     pdf.cell(0, 8, sanitize_pdf_text(f"Total de Registros: {len(logs_filtered)}"), new_x="LMARGIN", new_y="NEXT")
-    pdf.ln(4)
 
-    pdf.set_font("Helvetica", "", 9)
+    # --- DIGITADOR E IMPORTADOR COM MAIS ATIVIDADE NO PERÍODO ---
+    digitador_counter = Counter()
+    importador_counter = Counter()
+    importador_pattern = re.compile(r"—\s*\[(.*?)\]\s*—")
+
     for item in logs_filtered:
-        pdf.set_text_color(*PDF_BLACK)
+        digitador = str(item.get("digitador", "-")).strip()
+        if digitador and digitador not in ("-", "nan", "None"):
+            digitador_counter[digitador] += 1
 
-        segments = build_pdf_segments(item['mensagem'])
-        for texto_seg, cor in segments:
-            pdf.set_text_color(*(cor if cor else PDF_BLACK))
-            pdf.write(6, sanitize_pdf_text(texto_seg))
+        match = importador_pattern.search(item.get("mensagem", ""))
+        if match:
+            importador = match.group(1).strip()
+            if importador and importador not in ("-", "nan", "None"):
+                importador_counter[importador] += 1
 
-        pdf.set_text_color(*PDF_BLACK)
-        pdf.ln(8)
+    pdf.set_font("Helvetica", "", 10)
 
-        # --- LINHA SEPARADORA PRETA SEMI-TRANSPARENTE ENTRE OS REGISTROS ---
-        pdf.set_draw_color(0, 0, 0)
-        pdf.set_line_width(0.2)
-        with pdf.local_context(stroke_opacity=0.3):
-            pdf.line(pdf.l_margin, pdf.get_y(), pdf.w - pdf.r_margin, pdf.get_y())
-        pdf.ln(4)
+    if digitador_counter:
+        top_digitador, qtd_digitador = digitador_counter.most_common(1)[0]
+        pdf.cell(
+            0, 7,
+            sanitize_pdf_text(f"Digitador com mais atividade: {top_digitador} ({qtd_digitador} registro(s))"),
+            new_x="LMARGIN", new_y="NEXT"
+        )
 
-    return bytes(pdf.output())
+    if importador_counter:
+        top_importador, qtd_importador = importador_counter.most_common(1)[0]
+        pdf.cell(
+            0, 7,
+            sanitize_pdf_text(f"Importador com mais atividade: {top_importador} ({qtd_importador} registro(s))"),
+            new_x="LMARGIN", new_y="NEXT"
+        )
+
+    pdf.ln(4)
 
 # ==========================================
 # TELA DE AUTENTICAÇÃO
