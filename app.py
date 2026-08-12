@@ -16,6 +16,107 @@ from streamlit_autorefresh import st_autorefresh
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="Monitor Operacional - Multprocessing", page_icon="📊", layout="centered")
 
+def exibir_intro():
+    """Exibe a intro apenas com o logotipo durante o carregamento"""
+    intro_placeholder = st.empty()
+    logo_base64 = get_logo_base64()
+    
+    intro_html = f"""
+    <style>
+        .intro-container {{
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            z-index: 99999;
+            transition: opacity 0.8s ease-in-out;
+        }}
+        .intro-container.fade-out {{
+            opacity: 0;
+            pointer-events: none;
+        }}
+        .logo-container {{
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            width: 100%;
+            animation: float 2s ease-in-out infinite;
+        }}
+        .logo-image {{
+            max-width: 400px;
+            width: 80%;
+            margin: 0 auto;
+            display: block;
+        }}
+        @keyframes float {{
+            0% {{ transform: translateY(0px); }}
+            50% {{ transform: translateY(-10px); }}
+            100% {{ transform: translateY(0px); }}
+        }}
+    </style>
+    
+    <div id="intro-container" class="intro-container">
+        <div class="logo-container">
+            <img src="data:image/png;base64,{logo_base64}" class="logo-image" alt="Logo">
+        </div>
+    </div>
+    
+    <script>
+        var percent = 0;
+        var container = document.getElementById('intro-container');
+        
+        var interval = setInterval(function() {{
+            percent += Math.floor(Math.random() * 15) + 5;
+            if (percent > 100) percent = 100;
+            
+            if (percent >= 100) {{
+                clearInterval(interval);
+                setTimeout(function() {{
+                    if (container) {{
+                        container.classList.add('fade-out');
+                        setTimeout(function() {{
+                            container.style.display = 'none';
+                        }}, 800);
+                    }}
+                }}, 300);
+            }}
+        }}, 100);
+    </script>
+    """
+    
+    intro_placeholder.markdown(intro_html, unsafe_allow_html=True)
+    time.sleep(1.5)
+    intro_placeholder.empty()
+    return intro_placeholder
+
+def get_logo_base64():
+    try:
+        with open("logoMult.png", "rb") as img_file:
+            return base64.b64encode(img_file.read()).decode()
+    except:
+        return "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+
+# ==========================================
+# INICIALIZAÇÃO - EXIBE INTRO ENQUANTO CARREGA
+# ==========================================
+if 'intro_exibida' not in st.session_state:
+    exibir_intro()
+    st.session_state['intro_exibida'] = True
+
+def converter_para_csv_integracao(df):
+    if df is None or df.empty:
+        return "".encode("utf-8-sig")
+    colunas_validas = [c for c in df.columns if "Justificativa" not in c]
+    df_csv = df[colunas_validas].copy()
+    return df_csv.to_csv(index=False, sep=";").encode("utf-8-sig")
+
 # ==========================================
 # CONFIGURAÇÃO DE BORDAS E ESPAÇAMENTO DO STREAMLIT
 # ==========================================
