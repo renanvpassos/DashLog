@@ -480,12 +480,11 @@ def generate_pdf(logs_filtered, start_date, end_date) -> bytes:
             if importador and importador not in ("-", "nan", "None"):
                 importador_counter[importador] += 1
 
-    pdf.set_font("Helvetica", "", 10)
-
+    # Mantém negrito e tamanho 11, igual ao "Total de Registros"
     if digitador_counter:
         top_digitador, qtd_digitador = digitador_counter.most_common(1)[0]
         pdf.cell(
-            0, 7,
+            0, 8,
             sanitize_pdf_text(f"Digitador com mais atividade: {top_digitador} ({qtd_digitador} registro(s))"),
             new_x="LMARGIN", new_y="NEXT"
         )
@@ -493,14 +492,11 @@ def generate_pdf(logs_filtered, start_date, end_date) -> bytes:
     if importador_counter:
         top_importador, qtd_importador = importador_counter.most_common(1)[0]
         pdf.cell(
-            0, 7,
+            0, 8,
             sanitize_pdf_text(f"Importador com mais atividade: {top_importador} ({qtd_importador} registro(s))"),
             new_x="LMARGIN", new_y="NEXT"
         )
 
-    pdf.ln(4)
-    pdf.set_draw_color(200, 200, 200)
-    pdf.line(pdf.get_x(), pdf.get_y(), pdf.get_x() + 190, pdf.get_y())
     pdf.ln(4)
 
     # --- CORPO: LISTA DE REGISTROS ---
