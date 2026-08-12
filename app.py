@@ -476,6 +476,13 @@ def generate_pdf(logs_filtered, start_date, end_date) -> bytes:
         pdf.set_text_color(*PDF_BLACK)
         pdf.ln(8)
 
+        # --- LINHA SEPARADORA PRETA SEMI-TRANSPARENTE ENTRE OS REGISTROS ---
+        pdf.set_draw_color(0, 0, 0)
+        pdf.set_line_width(0.2)
+        with pdf.local_context(stroke_opacity=0.3):
+            pdf.line(pdf.l_margin, pdf.get_y(), pdf.w - pdf.r_margin, pdf.get_y())
+        pdf.ln(4)
+
     return bytes(pdf.output())
 
 # ==========================================
