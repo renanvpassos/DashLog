@@ -14,7 +14,7 @@ from supabase import create_client, Client
 from streamlit_autorefresh import st_autorefresh
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="Monitor Operacional - Multprocessing", page_icon=" 📊", layout="centered")
+st.set_page_config(page_title="Monitor Operacional - Multprocessing", page_icon="📊", layout="centered")
 
 # ==========================================
 # CONFIGURAÇÃO DE BORDAS E ESPAÇAMENTO DO STREAMLIT
