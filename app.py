@@ -698,3 +698,29 @@ with log_container:
             st.markdown(mensagem_formatada, unsafe_allow_html=True)
     else:
         st.write("Nenhum registro encontrado para os filtros selecionados.")
+
+# ==========================================
+# EXPORTAÇÃO DO LOG EM PDF (DE ACORDO COM O PERÍODO SELECIONADO)
+# ==========================================
+st.write("")
+
+if logs_periodo:
+    logs_para_pdf = sorted(logs_periodo, key=obter_data_log, reverse=True)
+    pdf_bytes = generate_pdf(logs_para_pdf, dt_inicio, dt_fim)
+
+    st.download_button(
+        label="📄 Extrair Log em PDF",
+        data=pdf_bytes,
+        file_name=f"relatorio_log_{dt_inicio.strftime('%Y%m%d')}_a_{dt_fim.strftime('%Y%m%d')}.pdf",
+        mime="application/pdf",
+        use_container_width=True,
+    )
+else:
+    st.download_button(
+        label="📄 Extrair Log em PDF",
+        data=b"",
+        file_name="relatorio_log.pdf",
+        mime="application/pdf",
+        disabled=True,
+        use_container_width=True,
+    )
