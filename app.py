@@ -732,17 +732,10 @@ if logs_periodo:
 
     st.download_button(
         label="📄 Extrair Log em PDF",
-        data=pdf_bytes,
+        data=io.BytesIO(pdf_bytes),
         file_name=f"relatorio_log_{dt_inicio.strftime('%Y%m%d')}_a_{dt_fim.strftime('%Y%m%d')}.pdf",
         mime="application/pdf",
         use_container_width=True,
     )
 else:
-    st.download_button(
-        label="📄 Extrair Log em PDF",
-        data=b"",
-        file_name="relatorio_log.pdf",
-        mime="application/pdf",
-        disabled=True,
-        use_container_width=True,
-    )
+    st.caption("📄 Nenhum registro no período selecionado para extrair em PDF.")
