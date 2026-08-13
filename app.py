@@ -18,18 +18,6 @@ import gspread
 from google.oauth2.service_account import Credentials
 from googleapiclient.errors import HttpError
 
-def fetch_with_backoff(request_func, retries=5):
-    delay = 2
-    for attempt in range(retries):
-        try:
-            return request_func()
-        except HttpError as e:
-            if e.resp.status == 429 and attempt < retries - 1:
-                time.sleep(delay)
-                delay *= 2  # Dobra o tempo de espera (2s, 4s, 8s, 16s...)
-            else:
-                raise
-
 # ==========================================
 # CONFIGURAÇÃO DE BORDAS E ESPAÇAMENTO DO STREAMLIT
 # ==========================================
@@ -53,6 +41,13 @@ st.markdown(
     unsafe_allow_html=True
 )
 
+def get_logo_base64():
+    try:
+        with open("logoMult.png", "rb") as img_file:
+            return base64.b64encode(img_file.read()).decode()
+    except Exception:
+        return "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+
 def exibir_intro():
     """Exibe a intro apenas com o logotipo durante o carregamento"""
     intro_placeholder = st.empty()
@@ -68,10 +63,7 @@ def exibir_intro():
             min-height: 100vh;
             background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
             position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
+            top: 0; left: 0; right: 0; bottom: 0;
             z-index: 99999;
             transition: opacity 0.8s ease-in-out;
         }}
@@ -108,7 +100,6 @@ def exibir_intro():
     <script>
         var percent = 0;
         var container = document.getElementById('intro-container');
-        
         var interval = setInterval(function() {{
             percent += Math.floor(Math.random() * 15) + 5;
             if (percent > 100) percent = 100;
@@ -129,16 +120,8 @@ def exibir_intro():
     """
     
     intro_placeholder.markdown(intro_html, unsafe_allow_html=True)
-    time.sleep(1.5)
+    time.sleep(1.2)
     intro_placeholder.empty()
-    return intro_placeholder
-
-def get_logo_base64():
-    try:
-        with open("logoMult.png", "rb") as img_file:
-            return base64.b64encode(img_file.read()).decode()
-    except Exception:
-        return "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
 
 # ==========================================
 # INICIALIZAÇÃO - EXIBE INTRO ENQUANTO CARREGA
@@ -147,20 +130,12 @@ if 'intro_exibida' not in st.session_state:
     exibir_intro()
     st.session_state['intro_exibida'] = True
 
-def converter_para_csv_integracao(df):
-    if df is None or df.empty:
-        return "".encode("utf-8-sig")
-    colunas_validas = [c for c in df.columns if "Justificativa" not in c]
-    df_csv = df[colunas_validas].copy()
-    return df_csv.to_csv(index=False, sep=";").encode("utf-8-sig")
-
 # ==========================================
 # CONFIGURAÇÕES DE FUSO HORÁRIO E STREAMLIT
 # ==========================================
 TZ_BR = ZoneInfo("America/Sao_Paulo")
 
 def get_now_br() -> datetime:
-    """Retorna o datetime atual no fuso de Brasília."""
     return datetime.now(TZ_BR)
 
 st_autorefresh(interval=35000, key="auto_sync_timer")
@@ -184,14 +159,12 @@ supabase = init_supabase()
 # ==========================================
 @st.cache_resource
 def init_gspread_client():
-    """Autentica na Google API usando a Service Account gravada em secrets."""
     try:
         scopes = [
             "https://www.googleapis.com/auth/spreadsheets.readonly",
             "https://www.googleapis.com/auth/drive.readonly"
         ]
         
-        # Aceita se estiver sob a chave 'gcp_service_account' ou diretamente na raiz do secrets
         if "gcp_service_account" in st.secrets:
             creds_dict = dict(st.secrets["gcp_service_account"])
         else:
@@ -220,7 +193,6 @@ def init_gspread_client():
 NOME_ABA_LOG = "LOG"
 
 def extract_spreadsheet_id(url_or_id: str) -> str:
-    """Extrai o ID da planilha a partir de uma URL ou do próprio ID."""
     match = re.search(r"/d/([a-zA-Z0-9-_]+)", str(url_or_id))
     return match.group(1) if match else str(url_or_id).strip()
 
@@ -229,12 +201,10 @@ LISTA_PLANILHAS = {
     for nome, sheet_id_or_url in st.secrets.get("planilhas", {}).items()
 }
 
-DATA_DIR = "data"
-os.makedirs(DATA_DIR, exist_ok=True)
-
 # ==========================================
-# GERENCIAMENTO DE LOGS VIA SUPABASE
+# GERENCIAMENTO DE LOGS VIA SUPABASE (CACHE)
 # ==========================================
+@st.cache_data(ttl=30)
 def load_logs_by_period(start_date: date, end_date: date):
     try:
         response = (
@@ -280,7 +250,7 @@ def add_log_entries_bulk(logs_list):
             st.error(f"Erro ao salvar lote de registros no Supabase: {e}")
 
 # ==========================================
-# TRATAMENTO DE TEXTO E LEITURA DA ABA LOG VIA API
+# TRATAMENTO DE TEXTO E PROCESSAMENTO
 # ==========================================
 def normalize_text(text: str) -> str:
     text_str = str(text).strip()
@@ -290,8 +260,7 @@ def normalize_text(text: str) -> str:
         pass
         
     nfkd_form = unicodedata.normalize('NFKD', text_str)
-    only_ascii = "".join([c for c in nfkd_form if not unicodedata.combining(c)])
-    return only_ascii.upper()
+    return "".join([c for c in nfkd_form if not unicodedata.combining(c)]).upper()
 
 def process_single_sheet_update(sheet_name, uploaded_df):
     new_columns = []
@@ -318,10 +287,7 @@ def process_single_sheet_update(sheet_name, uploaded_df):
     missing = [col for col in req_cols if col not in uploaded_df.columns]
     
     if missing:
-        erro = (
-            f"❌ A aba '{NOME_ABA_LOG}' da planilha '{sheet_name}' não possui as colunas necessárias: {', '.join(missing)}.\n\n"
-            f"**Colunas encontradas:** {list(uploaded_df.columns)}"
-        )
+        erro = f"❌ A aba '{NOME_ABA_LOG}' da planilha '{sheet_name}' não possui as colunas necessárias: {', '.join(missing)}."
         return False, erro
 
     uploaded_df = uploaded_df.fillna("-").astype(str)
@@ -348,14 +314,11 @@ def process_single_sheet_update(sheet_name, uploaded_df):
             if observacao in ["nan", "None", ""]:
                 observacao = "-"
 
-            msg_log = (
-                f"{data_atualizacao} — [{importador}] — {digitador} — "
-                f"Ação: {observacao} — Referência: {ref}"
-            )
+            msg_log = f"{data_atualizacao} — [{importador}] — {digitador} — Ação: {observacao} — Referência: {ref}"
 
             try:
-                date_part = data_atualizacao.split()[0]
-                parsed_date = datetime.strptime(date_part, "%d/%m/%Y").strftime("%Y-%m-%d")
+                parsed_dt = pd.to_datetime(data_atualizacao, dayfirst=True)
+                parsed_date = parsed_dt.strftime("%Y-%m-%d")
             except Exception:
                 parsed_date = now_br.strftime("%Y-%m-%d")
 
@@ -376,28 +339,23 @@ def process_single_sheet_update(sheet_name, uploaded_df):
     return True, None
 
 def fetch_and_process_sheet(name, sheet_id, client):
-    """Consulta a planilha privada utilizando a API do Google via gspread."""
     try:
         spreadsheet = client.open_by_key(sheet_id)
-        
         try:
             worksheet = spreadsheet.worksheet(NOME_ABA_LOG)
         except gspread.exceptions.WorksheetNotFound:
             return False, f"❌ **Erro na '{name}'**: A aba '{NOME_ABA_LOG}' não foi encontrada."
 
         data = worksheet.get_all_records()
-        
         if not data:
-            # Tenta pegar todos os valores caso não haja cabeçalho padrão
             values = worksheet.get_all_values()
             if not values:
-                return True, None # Planilha vazia
+                return True, None 
             df_dl = pd.DataFrame(values[1:], columns=values[0])
         else:
             df_dl = pd.DataFrame(data)
 
-        success, msg = process_single_sheet_update(name, df_dl)
-        return success, msg
+        return process_single_sheet_update(name, df_dl)
 
     except gspread.exceptions.APIError as e:
         return False, f"❌ **Erro na API do Google para '{name}'**: {e.response.json().get('error', {}).get('message', str(e))}"
@@ -424,7 +382,7 @@ def executar_sincronizacao():
     return sucessos
 
 # ==========================================
-# RELATÓRIO PDF (SUPORTE MULTIBYTE / LATIN-1 SAFE)
+# RELATÓRIO PDF (SUPORTE LATIN-1 SAFE)
 # ==========================================
 class PDFReport(FPDF):
     def header(self):
@@ -503,19 +461,11 @@ def generate_pdf(logs_filtered, start_date, end_date) -> bytes:
 
     if digitador_counter:
         top_digitador, qtd_digitador = digitador_counter.most_common(1)[0]
-        pdf.cell(
-            0, 8,
-            sanitize_pdf_text(f"Digitador com mais atividade: {top_digitador} ({qtd_digitador} registro(s))"),
-            new_x="LMARGIN", new_y="NEXT"
-        )
+        pdf.cell(0, 8, sanitize_pdf_text(f"Digitador com mais atividade: {top_digitador} ({qtd_digitador} registro(s))"), new_x="LMARGIN", new_y="NEXT")
 
     if importador_counter:
         top_importador, qtd_importador = importador_counter.most_common(1)[0]
-        pdf.cell(
-            0, 8,
-            sanitize_pdf_text(f"Importador com mais atividade: {top_importador} ({qtd_importador} registro(s))"),
-            new_x="LMARGIN", new_y="NEXT"
-        )
+        pdf.cell(0, 8, sanitize_pdf_text(f"Importador com mais atividade: {top_importador} ({qtd_importador} registro(s))"), new_x="LMARGIN", new_y="NEXT")
 
     pdf.ln(3)
     pdf.set_draw_color(220, 220, 220)
@@ -530,17 +480,13 @@ def generate_pdf(logs_filtered, start_date, end_date) -> bytes:
 
         for texto, cor in segments:
             texto_limpo = sanitize_pdf_text(texto)
-            if cor:
-                pdf.set_text_color(*cor)
-            else:
-                pdf.set_text_color(*PDF_BLACK)
+            pdf.set_text_color(*(cor if cor else PDF_BLACK))
             pdf.write(5, texto_limpo)
 
         pdf.set_text_color(*PDF_BLACK)
         pdf.ln(6)
 
-    output = pdf.output()
-    return bytes(output)
+    return bytes(pdf.output())
 
 # ==========================================
 # TELA DE AUTENTICAÇÃO
@@ -569,12 +515,6 @@ if not st.session_state.authenticated:
     st.stop()
 
 # ==========================================
-# EXECUÇÃO AUTOMÁTICA DE SINCRONIZAÇÃO A CADA LOOP
-# ==========================================
-with st.spinner("Sincronizando planilhas protegidas em segundo plano..."):
-    qtd_sucesso = executar_sincronizacao()
-
-# ==========================================
 # PAINEL PRINCIPAL
 # ==========================================
 col_titulo, col_logo = st.columns([0.88, 0.12], vertical_alignment="center")
@@ -585,7 +525,7 @@ with col_titulo:
 with col_logo:
     st.image("logoMult.png", use_container_width=True)
 
-st.caption(f"Monitorando **{len(LISTA_PLANILHAS)}** planilha(s) configurada(s) — dados lidos da aba **'{NOME_ABA_LOG}'**. *(Atenção: Atualiza automaticamente a cada 20 segundos)*")
+st.caption(f"Monitorando **{len(LISTA_PLANILHAS)}** planilha(s) configurada(s) — dados lidos da aba **'{NOME_ABA_LOG}'**.")
 
 st.divider()
 
@@ -596,31 +536,22 @@ st.subheader("📅 Seleção de Período de Análise")
 col_search, col_dt1, col_dt2 = st.columns([2, 1, 1])
 
 with col_dt1:
-    dt_inicio = st.date_input(
-        "Data Inicial",
-        value=hoje_br,
-        format="DD/MM/YYYY"
-    )
+    dt_inicio = st.date_input("Data Inicial", value=hoje_br, format="DD/MM/YYYY")
 
 with col_dt2:
-    dt_fim = st.date_input(
-        "Data Final",
-        value=hoje_br,
-        format="DD/MM/YYYY"
-    )
+    dt_fim = st.date_input("Data Final", value=hoje_br, format="DD/MM/YYYY")
 
 with col_search:
-    search_query = st.text_input(
-        "🔍 Pesquisar no Log:",
-        placeholder="Nome do digitador, importador ou referência..."
-    )
+    search_query = st.text_input("🔍 Pesquisar no Log:", placeholder="Nome do digitador, importador ou referência...")
+
+# Sincroniza em segundo plano com controle no session_state
+if "last_sync" not in st.session_state or (time.time() - st.session_state.last_sync) > 30:
+    with st.spinner("Sincronizando planilhas em segundo plano..."):
+        executar_sincronizacao()
+        st.session_state.last_sync = time.time()
 
 logs_periodo = load_logs_by_period(dt_inicio, dt_fim)
-
-if logs_periodo:
-    df_logs_periodo = pd.DataFrame(logs_periodo)
-else:
-    df_logs_periodo = pd.DataFrame(columns=["timestamp", "date", "sheet_name", "digitador", "referencia", "mensagem"])
+df_logs_periodo = pd.DataFrame(logs_periodo) if logs_periodo else pd.DataFrame(columns=["timestamp", "date", "sheet_name", "digitador", "referencia", "mensagem"])
 
 st.divider()
 
@@ -638,17 +569,13 @@ if not df_logs_periodo.empty:
 
     if col_data and col_digitador:
         df_sorted = df_logs_periodo.sort_values(by=[col_digitador, col_data]).copy()
-        df_sorted[col_data] = pd.to_datetime(df_sorted[col_data], errors="coerce")
+        df_sorted[col_data] = pd.to_datetime(df_sorted[col_data], errors="coerce", dayfirst=True)
         df_sorted["diff_tempo"] = df_sorted.groupby(col_digitador)[col_data].diff()
         df_sorted["nova_acao"] = df_sorted["diff_tempo"].isna() | (df_sorted["diff_tempo"].dt.total_seconds() > 120)
         
         total_acoes_agrupadas = int(df_sorted["nova_acao"].sum())
         df_acoes_filtradas = df_sorted[df_sorted["nova_acao"]]
     else:
-        st.warning(
-            f"⚠️ Colunas não encontradas para agrupamento. "
-            f"Colunas disponíveis na tabela: `{list(df_logs_periodo.columns)}`"
-        )
         total_acoes_agrupadas = len(df_logs_periodo)
         df_acoes_filtradas = df_logs_periodo.copy()
 
@@ -658,9 +585,9 @@ st.subheader(f"📈 Estatísticas no Período ({dt_inicio.strftime('%d/%m/%Y')} 
 if not df_logs_periodo.empty:
     col_m1, col_m2, col_m3 = st.columns(3)
     
-    col_m1.metric("Ações Registradas no Período", total_acoes_agrupadas)
+    col_m1.metric("Ações Registradas", total_acoes_agrupadas)
     col_m2.metric("Digitadores Ativos", df_logs_periodo["digitador"].nunique())
-    col_m3.metric("Planilhas com Atividade", df_logs_periodo["sheet_name"].nunique())
+    col_m3.metric("Planilhas Ativas", df_logs_periodo["sheet_name"].nunique())
 
     planilhas_com_log = ["🌐 Consolidado (Todas)"] + sorted(list(df_logs_periodo["sheet_name"].unique()))
     tabs = st.tabs(planilhas_com_log)
@@ -702,12 +629,7 @@ if logs_periodo:
             referencia = str(log.get("referencia", "")).lower()
             sheet = str(log.get("sheet_name", "")).lower()
 
-            if (
-                term in msg
-                or term in digitador
-                or term in referencia
-                or term in sheet
-            ):
+            if term in msg or term in digitador or term in referencia or term in sheet:
                 filtered_logs.append(log)
     else:
         filtered_logs = logs_periodo.copy()
@@ -718,22 +640,9 @@ def obter_data_log(entry):
         return datetime.strptime(timestamp_str, "%d/%m/%Y %H:%M:%S")
     except Exception:
         pass
-
-    msg = entry.get("mensagem", "")
-    match = re.search(r"^(\d{2}/\d{2}/\d{4}\s\d{2}:\d{2}:\d{2})", msg)
-    if match:
-        try:
-            return datetime.strptime(match.group(1), "%d/%m/%Y %H:%M:%S")
-        except Exception:
-            pass
-
     return datetime.min
 
-logs_ordenados = (
-    sorted(filtered_logs, key=obter_data_log, reverse=True)
-    if filtered_logs
-    else []
-)
+logs_ordenados = sorted(filtered_logs, key=obter_data_log, reverse=True) if filtered_logs else []
 
 with log_container:
     if logs_ordenados:
@@ -745,14 +654,8 @@ with log_container:
                 r"<span style='color: #008000 !important; background-color: #e0e0e0; padding: 3px 8px; border-radius: 4px; font-weight: bold; display: inline-block;'>\1</span>",
                 mensagem,
             )
-
-            mensagem_formatada = re.sub(
-                r"\b(de)\b", r"**\1**", mensagem_formatada, flags=re.IGNORECASE
-            )
-            mensagem_formatada = re.sub(
-                r"\b(para)\b", r"**\1**", mensagem_formatada, flags=re.IGNORECASE
-            )
-
+            mensagem_formatada = re.sub(r"\b(de)\b", r"**\1**", mensagem_formatada, flags=re.IGNORECASE)
+            mensagem_formatada = re.sub(r"\b(para)\b", r"**\1**", mensagem_formatada, flags=re.IGNORECASE)
             mensagem_formatada = re.sub(
                 r"Ação:\s*(.*?)\s*—\s*Referência:\s*(.*)$",
                 r"<span style='color: red; font-weight: bold;'>Ação:</span> \1 — Referência: <span style='color: #1E90FF; font-weight: bold;'>\2</span>",
