@@ -303,6 +303,10 @@ def process_single_sheet_update(sheet_name, uploaded_df):
         return False, erro
 
     uploaded_df = uploaded_df.fillna("-").astype(str)
+    
+    # 1. REMOVE DUPLICADAS EXATAS VINDA DA PRÓPRIA PLANILHA
+    uploaded_df = uploaded_df.drop_duplicates(subset=req_cols)
+
     existing_keys_in_db = get_existing_timestamps_for_sheet(sheet_name)
     new_logs = []
     now_br = get_now_br()
@@ -315,7 +319,8 @@ def process_single_sheet_update(sheet_name, uploaded_df):
         if not digitador or digitador in ["-", "nan", "None"] or not ref or ref in ["-", "nan", "None"]:
             continue
 
-        row_key = f"{ref}_{digitador}_{data_atualizacao}"
+        # 2. CHAVE DE COMPARAÇÃO NORMALIZADA (Sem espaços extras, case-insensitive)
+        row_key = f"{ref.upper()}_{digitador.upper()}_{data_atualizacao.upper()}"
 
         if row_key not in existing_keys_in_db:
             importador = row.get("IMPORTADOR", "-").strip()
@@ -331,7 +336,7 @@ def process_single_sheet_update(sheet_name, uploaded_df):
                 f"Ação: {observacao} — Referência: {ref}"
             )
 
-            # Conversão robusta da data histórica da planilha
+            # Conversão robusta de data
             try:
                 dt_obj = pd.to_datetime(data_atualizacao, dayfirst=True, errors="coerce")
                 if pd.notna(dt_obj):
@@ -350,13 +355,14 @@ def process_single_sheet_update(sheet_name, uploaded_df):
                 "mensagem": msg_log
             })
             
+            # 3. EVITA DUPLICAR NO MESMO BATCH
             existing_keys_in_db.add(row_key)
 
     if new_logs:
         add_log_entries_bulk(new_logs)
 
     return True, None
-
+    
 # ==========================================
 # LEITURA DE PLANILHA VIA REQUISIÇÃO DIRECT CSV (SEM CORTE DE LINHAS)
 # ==========================================
