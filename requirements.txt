@@ -5,3 +5,5 @@ google-api-python-client>=2.100.0
 google-auth>=2.20.0
 supabase
 streamlit-autorefresh
+requests
+gspread
