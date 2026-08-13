@@ -160,7 +160,7 @@ def get_now_br() -> datetime:
 # ---------------------------------------------------------
 # AUTOMAÇÃO: Recarrega/Executa a cada 20 segundos (20.000ms)
 # ---------------------------------------------------------
-st_autorefresh(interval=20000, key="auto_sync_timer")
+st_autorefresh(interval=35000, key="auto_sync_timer")
 
 # ==========================================
 # CONEXÃO COM O SUPABASE
