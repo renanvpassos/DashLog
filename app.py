@@ -14,21 +14,9 @@ from fpdf import FPDF
 from supabase import create_client, Client
 from streamlit_autorefresh import st_autorefresh
 import base64
-import gspread
-from google.oauth2.service_account import Credentials
-from googleapiclient.errors import HttpError
 
-def fetch_with_backoff(request_func, retries=5):
-    delay = 2
-    for attempt in range(retries):
-        try:
-            return request_func()
-        except HttpError as e:
-            if e.resp.status == 429 and attempt < retries - 1:
-                time.sleep(delay)
-                delay *= 2  # Dobra o tempo de espera (2s, 4s, 8s, 16s...)
-            else:
-                raise
+from google.oauth2.service_account import Credentials
+import google.auth.transport.requests
 
 # ==========================================
 # CONFIGURAÇÃO DE BORDAS E ESPAÇAMENTO DO STREAMLIT
@@ -163,7 +151,7 @@ def get_now_br() -> datetime:
     """Retorna o datetime atual no fuso de Brasília."""
     return datetime.now(TZ_BR)
 
-st_autorefresh(interval=60000, key="auto_sync_timer")
+st_autorefresh(interval=35000, key="auto_sync_timer")
 
 # ==========================================
 # CONEXÃO COM O SUPABASE
@@ -180,18 +168,17 @@ def init_supabase() -> Client:
 supabase = init_supabase()
 
 # ==========================================
-# AUTENTICAÇÃO GOOGLE SHEETS API (GSPREAD)
+# GERADOR DE TOKEN GOOGLE OAUTH2 (SEM QUOTA DE API)
 # ==========================================
 @st.cache_resource
-def init_gspread_client():
-    """Autentica na Google API usando a Service Account gravada em secrets."""
+def get_google_access_token() -> str:
+    """Gera o Access Token utilizando as credenciais da Service Account."""
     try:
         scopes = [
             "https://www.googleapis.com/auth/spreadsheets.readonly",
             "https://www.googleapis.com/auth/drive.readonly"
         ]
         
-        # Aceita se estiver sob a chave 'gcp_service_account' ou diretamente na raiz do secrets
         if "gcp_service_account" in st.secrets:
             creds_dict = dict(st.secrets["gcp_service_account"])
         else:
@@ -209,9 +196,11 @@ def init_gspread_client():
             }
 
         credentials = Credentials.from_service_account_info(creds_dict, scopes=scopes)
-        return gspread.authorize(credentials)
+        auth_req = google.auth.transport.requests.Request()
+        credentials.refresh(auth_req)
+        return credentials.token
     except Exception as e:
-        st.error(f"❌ Erro ao autenticar na Google API: {e}")
+        st.error(f"❌ Erro ao obter Token de Acesso do Google: {e}")
         st.stop()
 
 # ==========================================
@@ -280,7 +269,7 @@ def add_log_entries_bulk(logs_list):
             st.error(f"Erro ao salvar lote de registros no Supabase: {e}")
 
 # ==========================================
-# TRATAMENTO DE TEXTO E LEITURA DA ABA LOG VIA API
+# TRATAMENTO DE TEXTO E PROCESSAMENTO
 # ==========================================
 def normalize_text(text: str) -> str:
     text_str = str(text).strip()
@@ -375,42 +364,41 @@ def process_single_sheet_update(sheet_name, uploaded_df):
 
     return True, None
 
-def fetch_and_process_sheet(name, sheet_id, client):
-    """Consulta a planilha privada utilizando a API do Google via gspread."""
+# ==========================================
+# LEITURA DE PLANILHA VIA REQUISIÇÃO DIRECT CSV
+# ==========================================
+def fetch_and_process_sheet(name, sheet_id, token):
+    """Lê a planilha privada via requisição HTTP CSV (sem consumo de cota da API)."""
     try:
-        spreadsheet = client.open_by_key(sheet_id)
+        url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={NOME_ABA_LOG}"
+        headers = {"Authorization": f"Bearer {token}"}
         
-        try:
-            worksheet = spreadsheet.worksheet(NOME_ABA_LOG)
-        except gspread.exceptions.WorksheetNotFound:
-            return False, f"❌ **Erro na '{name}'**: A aba '{NOME_ABA_LOG}' não foi encontrada."
+        response = requests.get(url, headers=headers, timeout=15)
+        
+        if response.status_code == 404:
+            return False, f"❌ **Erro na '{name}'**: A aba '{NOME_ABA_LOG}' ou a planilha não foi encontrada."
+        elif response.status_code != 200:
+            return False, f"❌ Erro HTTP {response.status_code} ao buscar '{name}'."
 
-        data = worksheet.get_all_records()
-        
-        if not data:
-            # Tenta pegar todos os valores caso não haja cabeçalho padrão
-            values = worksheet.get_all_values()
-            if not values:
-                return True, None # Planilha vazia
-            df_dl = pd.DataFrame(values[1:], columns=values[0])
-        else:
-            df_dl = pd.DataFrame(data)
+        csv_content = response.content
+        df_dl = pd.read_csv(io.BytesIO(csv_content))
+
+        if df_dl.empty:
+            return True, None
 
         success, msg = process_single_sheet_update(name, df_dl)
         return success, msg
 
-    except gspread.exceptions.APIError as e:
-        return False, f"❌ **Erro na API do Google para '{name}'**: {e.response.json().get('error', {}).get('message', str(e))}"
     except Exception as e:
         return False, f"❌ Erro inesperado ao processar '{name}': {e}"
 
 def executar_sincronizacao():
     sucessos = 0
-    client = init_gspread_client()
+    token = get_google_access_token()
 
     with ThreadPoolExecutor(max_workers=5) as executor:
         futures = [
-            executor.submit(fetch_and_process_sheet, name, sheet_id, client)
+            executor.submit(fetch_and_process_sheet, name, sheet_id, token)
             for name, sheet_id in LISTA_PLANILHAS.items()
         ]
 
@@ -585,7 +573,7 @@ with col_titulo:
 with col_logo:
     st.image("logoMult.png", use_container_width=True)
 
-st.caption(f"Monitorando **{len(LISTA_PLANILHAS)}** planilha(s) configurada(s) — dados lidos da aba **'{NOME_ABA_LOG}'**. *(Atenção: Atualiza automaticamente a cada 20 segundos)*")
+st.caption(f"Monitorando **{len(LISTA_PLANILHAS)}** planilha(s) configurada(s) — dados lidos da aba **'{NOME_ABA_LOG}'**. *(Atenção: Atualiza automaticamente a cada 35 segundos)*")
 
 st.divider()
 
