@@ -41,6 +41,13 @@ st.markdown(
     unsafe_allow_html=True
 )
 
+def get_logo_base64():
+    try:
+        with open("logoMult.png", "rb") as img_file:
+            return base64.b64encode(img_file.read()).decode()
+    except Exception:
+        return "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+
 def exibir_intro():
     """Exibe a intro apenas com o logotipo durante o carregamento"""
     intro_placeholder = st.empty()
@@ -121,30 +128,13 @@ def exibir_intro():
     intro_placeholder.empty()
     return intro_placeholder
 
-def get_logo_base64():
-    try:
-        with open("logoMult.png", "rb") as img_file:
-            return base64.b64encode(img_file.read()).decode()
-    except Exception:
-        return "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
-
 # ==========================================
-# INICIALIZAÇÃO - EXIBE INTRO ENQUANTO CARREGA
+# INICIALIZAÇÃO
 # ==========================================
 if 'intro_exibida' not in st.session_state:
     exibir_intro()
     st.session_state['intro_exibida'] = True
 
-def converter_para_csv_integracao(df):
-    if df is None or df.empty:
-        return "".encode("utf-8-sig")
-    colunas_validas = [c for c in df.columns if "Justificativa" not in c]
-    df_csv = df[colunas_validas].copy()
-    return df_csv.to_csv(index=False, sep=";").encode("utf-8-sig")
-
-# ==========================================
-# CONFIGURAÇÕES DE FUSO HORÁRIO E STREAMLIT
-# ==========================================
 TZ_BR = ZoneInfo("America/Sao_Paulo")
 
 def get_now_br() -> datetime:
@@ -168,7 +158,7 @@ def init_supabase() -> Client:
 supabase = init_supabase()
 
 # ==========================================
-# GERADOR DE TOKEN GOOGLE OAUTH2 (SEM QUOTA DE API)
+# GERADOR DE TOKEN GOOGLE OAUTH2
 # ==========================================
 @st.cache_resource
 def get_google_access_token() -> str:
@@ -209,7 +199,6 @@ def get_google_access_token() -> str:
 NOME_ABA_LOG = "LOG"
 
 def extract_spreadsheet_id(url_or_id: str) -> str:
-    """Extrai o ID da planilha a partir de uma URL ou do próprio ID."""
     match = re.search(r"/d/([a-zA-Z0-9-_]+)", str(url_or_id))
     return match.group(1) if match else str(url_or_id).strip()
 
@@ -368,7 +357,7 @@ def process_single_sheet_update(sheet_name, uploaded_df):
 # LEITURA DE PLANILHA VIA REQUISIÇÃO DIRECT CSV
 # ==========================================
 def fetch_and_process_sheet(name, sheet_id, token):
-    """Lê a planilha privada via requisição HTTP CSV (sem consumo de cota da API)."""
+    """Lê a planilha privada via requisição HTTP CSV."""
     try:
         url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={NOME_ABA_LOG}"
         headers = {"Authorization": f"Bearer {token}"}
@@ -412,7 +401,7 @@ def executar_sincronizacao():
     return sucessos
 
 # ==========================================
-# RELATÓRIO PDF (SUPORTE MULTIBYTE / LATIN-1 SAFE)
+# RELATÓRIO PDF
 # ==========================================
 class PDFReport(FPDF):
     def header(self):
@@ -603,18 +592,26 @@ with col_search:
         placeholder="Nome do digitador, importador ou referência..."
     )
 
-# --- GARANTE ESTABILIDADE NO REFRESH VIA SESSION STATE ---
+# --- CARREGA LOGS DO BANCO E APLICA FILTRAGEM COMPLETA ---
 logs_periodo_brutos = load_logs_by_period(dt_inicio, dt_fim)
 
 if logs_periodo_brutos:
-    st.session_state["df_logs_periodo"] = pd.DataFrame(logs_periodo_brutos)
-elif "df_logs_periodo" not in st.session_state or (dt_inicio != st.session_state.get("last_dt_inicio") or dt_fim != st.session_state.get("last_dt_fim")):
-    st.session_state["df_logs_periodo"] = pd.DataFrame(columns=["timestamp", "date", "sheet_name", "digitador", "referencia", "mensagem"])
+    df_logs_periodo = pd.DataFrame(logs_periodo_brutos)
+else:
+    df_logs_periodo = pd.DataFrame(columns=["timestamp", "date", "sheet_name", "digitador", "referencia", "mensagem"])
 
+# Garantir conversão da data para filtro de período exato
+if not df_logs_periodo.empty and "date" in df_logs_periodo.columns:
+    df_logs_periodo["parsed_date"] = pd.to_datetime(df_logs_periodo["date"], errors="coerce").dt.date
+    df_logs_periodo = df_logs_periodo[
+        (df_logs_periodo["parsed_date"] >= dt_inicio) & 
+        (df_logs_periodo["parsed_date"] <= dt_fim)
+    ]
+
+st.session_state["df_logs_periodo"] = df_logs_periodo
 st.session_state["last_dt_inicio"] = dt_inicio
 st.session_state["last_dt_fim"] = dt_fim
 
-df_logs_periodo = st.session_state["df_logs_periodo"]
 logs_periodo = df_logs_periodo.to_dict("records") if not df_logs_periodo.empty else []
 
 st.divider()
@@ -624,7 +621,7 @@ total_acoes_agrupadas = 0
 
 if not df_logs_periodo.empty:
     col_data = None
-    for candidatos in ["DATA ATUALIZAÇÃO", "timestamp", "data_atualizacao", "data_hora", "data"]:
+    for candidatos in ["timestamp", "DATA ATUALIZAÇÃO", "data_atualizacao", "data_hora", "data"]:
         if candidatos in df_logs_periodo.columns:
             col_data = candidatos
             break
@@ -633,17 +630,17 @@ if not df_logs_periodo.empty:
 
     if col_data and col_digitador:
         df_sorted = df_logs_periodo.sort_values(by=[col_digitador, col_data]).copy()
-        df_sorted[col_data] = pd.to_datetime(df_sorted[col_data], errors="coerce")
-        df_sorted["diff_tempo"] = df_sorted.groupby(col_digitador)[col_data].diff()
+        
+        # Converte string formatada DD/MM/YYYY HH:MM:SS para Datetime
+        df_sorted["dt_parsed"] = pd.to_datetime(df_sorted[col_data], format="%d/%m/%Y %H:%M:%S", errors="coerce")
+        df_sorted["diff_tempo"] = df_sorted.groupby(col_digitador)["dt_parsed"].diff()
+        
+        # Considera nova ação se o intervalo entre edições for superior a 2 minutos (120 seg)
         df_sorted["nova_acao"] = df_sorted["diff_tempo"].isna() | (df_sorted["diff_tempo"].dt.total_seconds() > 120)
         
         total_acoes_agrupadas = int(df_sorted["nova_acao"].sum())
         df_acoes_filtradas = df_sorted[df_sorted["nova_acao"]]
     else:
-        st.warning(
-            f"⚠️ Colunas não encontradas para agrupamento. "
-            f"Colunas disponíveis na tabela: `{list(df_logs_periodo.columns)}`"
-        )
         total_acoes_agrupadas = len(df_logs_periodo)
         df_acoes_filtradas = df_logs_periodo.copy()
 else:
@@ -660,7 +657,7 @@ if not df_logs_periodo.empty:
     col_m3.metric("Planilhas com Atividade", df_logs_periodo["sheet_name"].nunique())
 
     # Exibe APENAS planilhas com movimentação no período selecionado
-    planilhas_com_movimentacao = sorted([p for p in df_logs_periodo["sheet_name"].unique() if p and p not in ["None", "nan", "-"]])
+    planilhas_com_movimentacao = sorted([p for p in df_logs_periodo["sheet_name"].unique() if p and str(p) not in ["None", "nan", "-"]])
     
     planilhas_com_log = ["🌐 Consolidado (Todas)"] + planilhas_com_movimentacao
     tabs = st.tabs(planilhas_com_log)
@@ -675,7 +672,7 @@ if not df_logs_periodo.empty:
             st.markdown("**Atividades por Planilha**")
             st.bar_chart(df_acoes_filtradas["sheet_name"].value_counts())
 
-    # --- ABAS INDIVIDUAIS (Com Movimentação) ---
+    # --- ABAS INDIVIDUAIS ---
     for idx, sheet_key in enumerate(planilhas_com_movimentacao, start=1):
         with tabs[idx]:
             df_sheet_logs = df_acoes_filtradas[df_acoes_filtradas["sheet_name"] == sheet_key]
