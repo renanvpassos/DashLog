@@ -2,6 +2,7 @@ import os
 import re
 import io
 import time
+import requests
 import unicodedata
 from collections import Counter
 from datetime import datetime, date
@@ -13,10 +14,6 @@ from fpdf import FPDF
 from supabase import create_client, Client
 from streamlit_autorefresh import st_autorefresh
 import base64
-
-from google.oauth2.service_account import Credentials
-from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
 
 # ==========================================
 # CONFIGURAÇÃO DE BORDAS E ESPAÇAMENTO DO STREAMLIT
@@ -160,7 +157,7 @@ def get_now_br() -> datetime:
 # ---------------------------------------------------------
 # AUTOMAÇÃO: Recarrega/Executa a cada 20 segundos (20.000ms)
 # ---------------------------------------------------------
-st_autorefresh(interval=35000, key="auto_sync_timer")
+st_autorefresh(interval=20000, key="auto_sync_timer")
 
 # ==========================================
 # CONEXÃO COM O SUPABASE
@@ -177,31 +174,7 @@ def init_supabase() -> Client:
 supabase = init_supabase()
 
 # ==========================================
-# CONEXÃO AUTENTICADA COM O GOOGLE SHEETS (SERVICE ACCOUNT)
-# ==========================================
-@st.cache_resource
-def init_google_credentials():
-    """Carrega as credenciais da Service Account a partir dos Secrets do Streamlit."""
-    creds_info = st.secrets.get("gcp_service_account")
-    if not creds_info:
-        st.error(
-            "❌ Credenciais da Service Account do Google (gcp_service_account) "
-            "não encontradas nos Secrets."
-        )
-        st.stop()
-    try:
-        return Credentials.from_service_account_info(
-            dict(creds_info),
-            scopes=["https://www.googleapis.com/auth/spreadsheets.readonly"],
-        )
-    except Exception as e:
-        st.error(f"❌ Erro ao carregar as credenciais da Service Account: {e}")
-        st.stop()
-
-google_credentials = init_google_credentials()
-
-# ==========================================
-# EXTRAÇÃO DO ID DA PLANILHA A PARTIR DO LINK
+# CONVERSOR DE LINK (Google Sheets para GViz CSV por Nome de Aba)
 # ==========================================
 NOME_ABA_LOG = "LOG"
 
@@ -209,6 +182,13 @@ def extract_spreadsheet_id(url: str) -> str:
     """Extrai o ID da planilha do Google Sheets."""
     match = re.search(r"/d/([a-zA-Z0-9-_]+)", url)
     return match.group(1) if match else None
+
+def convert_to_gviz_url(url: str, sheet_name: str = NOME_ABA_LOG) -> str:
+    """Converte a URL do Google Sheets para o endpoint GViz diretamente pelo nome da aba."""
+    sheet_id = extract_spreadsheet_id(url)
+    if not sheet_id:
+        return url
+    return f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={sheet_name}"
 
 # ==========================================
 # LINKS DAS PLANILHAS FIXOS NO CÓDIGO
@@ -372,67 +352,43 @@ def process_single_sheet_update(sheet_name, uploaded_df):
 
     return True, None
 
-def fetch_and_process_sheet(name, sheet_url, credentials):
-    """Lê a aba 'LOG' da planilha via Google Sheets API autenticada com Service Account."""
+def fetch_and_process_sheet(name, sheet_url, headers):
     try:
-        sheet_id = extract_spreadsheet_id(sheet_url)
-        if not sheet_id:
-            return False, f"❌ **Erro na '{name}'**: Não foi possível extrair o ID da planilha a partir do link."
+        csv_url = convert_to_gviz_url(sheet_url, sheet_name=NOME_ABA_LOG)
+        response = requests.get(csv_url, headers=headers, timeout=15)
+        
+        if response.status_code == 200:
+            corpo = response.text.strip()
+            if corpo.startswith("<") or "google-viz-error" in corpo.lower():
+                return False, f"❌ **Erro na '{name}'**: A aba '{NOME_ABA_LOG}' não foi encontrada ou a planilha não está compartilhada como 'Qualquer pessoa com o link'."
 
-        # Cada thread constrói seu próprio client HTTP para evitar problemas de concorrência
-        service = build("sheets", "v4", credentials=credentials, cache_discovery=False)
-
-        result = (
-            service.spreadsheets()
-            .values()
-            .get(spreadsheetId=sheet_id, range=NOME_ABA_LOG)
-            .execute()
-        )
-
-        values = result.get("values", [])
-
-        if not values:
-            return False, f"❌ **Erro na '{name}'**: A aba '{NOME_ABA_LOG}' está vazia ou não foi encontrada."
-
-        header = [str(h).strip() for h in values[0]]
-        data_rows = values[1:]
-        num_cols = len(header)
-
-        # Normaliza o tamanho das linhas (Sheets API omite células vazias no final da linha)
-        normalized_rows = [
-            row + [""] * (num_cols - len(row)) if len(row) < num_cols else row[:num_cols]
-            for row in data_rows
-        ]
-
-        df_dl = pd.DataFrame(normalized_rows, columns=header, dtype=str)
-
-        success, msg = process_single_sheet_update(name, df_dl)
-        if success:
-            return True, msg
-        return False, msg
-
-    except HttpError as e:
-        status = getattr(e.resp, "status", None)
-        if status == 404:
-            return False, f"❌ **Erro na '{name}'**: Planilha ou aba '{NOME_ABA_LOG}' não encontrada."
-        elif status == 403:
-            return False, (
-                f"❌ **Erro 403 na '{name}'**: Acesso negado. Verifique se a planilha foi "
-                f"compartilhada com o e-mail da Service Account (client_email nos Secrets)."
-            )
-        elif status == 401:
-            return False, f"❌ **Erro 401 na '{name}'**: Falha de autenticação da Service Account. Verifique as credenciais nos Secrets."
+            df_dl = pd.read_csv(io.StringIO(response.text), dtype=str)
+            success, msg = process_single_sheet_update(name, df_dl)
+            if success:
+                return True, msg
+            return False, msg
+        elif response.status_code in (400, 404):
+            return False, f"❌ **Erro na '{name}'**: Aba ou planilha não encontrada."
+        elif response.status_code == 403:
+            return False, f"❌ **Erro 403 na '{name}'**: Acesso negado. Verifique as permissões."
         else:
-            return False, f"❌ Erro HTTP {status} na planilha '{name}': {e}"
+            return False, f"❌ Erro HTTP {response.status_code} na planilha '{name}'."
     except Exception as e:
         return False, f"❌ Erro inesperado ao processar '{name}': {e}"
 
 def executar_sincronizacao():
     sucessos = 0
+    headers = {
+        'User-Agent': (
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+            'AppleWebKit/537.36 (KHTML, like Gecko) '
+            'Chrome/120.0.0.0 Safari/537.36'
+        )
+    }
 
     with ThreadPoolExecutor(max_workers=5) as executor:
         futures = [
-            executor.submit(fetch_and_process_sheet, name, url, google_credentials)
+            executor.submit(fetch_and_process_sheet, name, url, headers)
             for name, url in LISTA_PLANILHAS.items()
         ]
 
