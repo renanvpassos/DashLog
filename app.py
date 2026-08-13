@@ -14,16 +14,17 @@ from fpdf import FPDF
 from supabase import create_client, Client
 from streamlit_autorefresh import st_autorefresh
 import base64
+import gspread
+from google.oauth2.service_account import Credentials
 
 # ==========================================
 # CONFIGURAÇÃO DE BORDAS E ESPAÇAMENTO DO STREAMLIT
 # ==========================================
-st.set_page_config(layout="wide")  # Garante uso da largura total da tela
+st.set_page_config(layout="wide", page_title="Monitor Operacional - Multprocessing", page_icon="📊")
 
 st.markdown(
     """
     <style>
-        /* Reduz o padding interno (bordas topo, laterais e fundo) da página */
         .main .block-container {
             padding-top: 1rem !important;
             padding-bottom: 1rem !important;
@@ -31,8 +32,6 @@ st.markdown(
             padding-right: 1rem !important;
             max-width: 100% !important;
         }
-        
-        /* Opcional: Reduz o espaço em branco no topo acima do cabeçalho */
         header[data-testid="stHeader"] {
             display: none;
         }
@@ -40,9 +39,6 @@ st.markdown(
     """,
     unsafe_allow_html=True
 )
-
-# --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="Monitor Operacional - Multprocessing", page_icon="📊")
 
 def exibir_intro():
     """Exibe a intro apenas com o logotipo durante o carregamento"""
@@ -128,7 +124,7 @@ def get_logo_base64():
     try:
         with open("logoMult.png", "rb") as img_file:
             return base64.b64encode(img_file.read()).decode()
-    except:
+    except Exception:
         return "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
 
 # ==========================================
@@ -154,9 +150,6 @@ def get_now_br() -> datetime:
     """Retorna o datetime atual no fuso de Brasília."""
     return datetime.now(TZ_BR)
 
-# ---------------------------------------------------------
-# AUTOMAÇÃO: Recarrega/Executa a cada 20 segundos (20.000ms)
-# ---------------------------------------------------------
 st_autorefresh(interval=20000, key="auto_sync_timer")
 
 # ==========================================
@@ -174,28 +167,53 @@ def init_supabase() -> Client:
 supabase = init_supabase()
 
 # ==========================================
-# CONVERSOR DE LINK (Google Sheets para GViz CSV por Nome de Aba)
+# AUTENTICAÇÃO GOOGLE SHEETS API (GSPREAD)
+# ==========================================
+@st.cache_resource
+def init_gspread_client():
+    """Autentica na Google API usando a Service Account gravada em secrets."""
+    try:
+        scopes = [
+            "https://www.googleapis.com/auth/spreadsheets.readonly",
+            "https://www.googleapis.com/auth/drive.readonly"
+        ]
+        
+        # Aceita se estiver sob a chave 'gcp_service_account' ou diretamente na raiz do secrets
+        if "gcp_service_account" in st.secrets:
+            creds_dict = dict(st.secrets["gcp_service_account"])
+        else:
+            creds_dict = {
+                "type": st.secrets.get("type"),
+                "project_id": st.secrets.get("project_id"),
+                "private_key_id": st.secrets.get("private_key_id"),
+                "private_key": st.secrets.get("private_key"),
+                "client_email": st.secrets.get("client_email"),
+                "client_id": st.secrets.get("client_id"),
+                "auth_uri": st.secrets.get("auth_uri"),
+                "token_uri": st.secrets.get("token_uri"),
+                "auth_provider_x509_cert_url": st.secrets.get("auth_provider_x509_cert_url"),
+                "client_x509_cert_url": st.secrets.get("client_x509_cert_url")
+            }
+
+        credentials = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+        return gspread.authorize(credentials)
+    except Exception as e:
+        st.error(f"❌ Erro ao autenticar na Google API: {e}")
+        st.stop()
+
+# ==========================================
+# EXTRAÇÃO DE ID DAS PLANILHAS
 # ==========================================
 NOME_ABA_LOG = "LOG"
 
-def extract_spreadsheet_id(url: str) -> str:
-    """Extrai o ID da planilha do Google Sheets."""
-    match = re.search(r"/d/([a-zA-Z0-9-_]+)", url)
-    return match.group(1) if match else None
+def extract_spreadsheet_id(url_or_id: str) -> str:
+    """Extrai o ID da planilha a partir de uma URL ou do próprio ID."""
+    match = re.search(r"/d/([a-zA-Z0-9-_]+)", str(url_or_id))
+    return match.group(1) if match else str(url_or_id).strip()
 
-def convert_to_gviz_url(url: str, sheet_name: str = NOME_ABA_LOG) -> str:
-    """Converte a URL do Google Sheets para o endpoint GViz diretamente pelo nome da aba."""
-    sheet_id = extract_spreadsheet_id(url)
-    if not sheet_id:
-        return url
-    return f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={sheet_name}"
-
-# ==========================================
-# LINKS DAS PLANILHAS FIXOS NO CÓDIGO
-# ==========================================
 LISTA_PLANILHAS = {
-    f"PLANILHA {nome.replace('_', ' ')}": f"https://docs.google.com/spreadsheets/d/{sheet_id}"
-    for nome, sheet_id in st.secrets.get("planilhas", {}).items()
+    f"PLANILHA {nome.replace('_', ' ')}": extract_spreadsheet_id(sheet_id_or_url)
+    for nome, sheet_id_or_url in st.secrets.get("planilhas", {}).items()
 }
 
 DATA_DIR = "data"
@@ -205,7 +223,6 @@ os.makedirs(DATA_DIR, exist_ok=True)
 # GERENCIAMENTO DE LOGS VIA SUPABASE
 # ==========================================
 def load_logs_by_period(start_date: date, end_date: date):
-    """Carrega logs do Supabase dentro do período especificado."""
     try:
         response = (
             supabase.table("atividades")
@@ -221,7 +238,6 @@ def load_logs_by_period(start_date: date, end_date: date):
         return []
 
 def get_existing_timestamps_for_sheet(sheet_name: str) -> set:
-    """Busca no Supabase os timestamps/mensagens que já foram inseridos para uma determinada planilha."""
     try:
         response = (
             supabase.table("atividades")
@@ -239,7 +255,6 @@ def get_existing_timestamps_for_sheet(sheet_name: str) -> set:
         return set()
 
 def add_log_entries_bulk(logs_list):
-    """Insere registros de atividade em lote no banco Supabase em blocos de 500 para evitar timeout."""
     if not logs_list:
         return
     
@@ -252,10 +267,9 @@ def add_log_entries_bulk(logs_list):
             st.error(f"Erro ao salvar lote de registros no Supabase: {e}")
 
 # ==========================================
-# TRATAMENTO DE TEXTO E LEITURA DIRETA DA ABA LOG
+# TRATAMENTO DE TEXTO E LEITURA DA ABA LOG VIA API
 # ==========================================
 def normalize_text(text: str) -> str:
-    """Remove acentos, caracteres corrompidos, espaços extras e converte para maiúsculo."""
     text_str = str(text).strip()
     try:
         text_str = text_str.encode('latin1').decode('utf-8')
@@ -267,8 +281,6 @@ def normalize_text(text: str) -> str:
     return only_ascii.upper()
 
 def process_single_sheet_update(sheet_name, uploaded_df):
-    """Lê TODOS os registros da aba 'LOG' e envia para o Supabase os que ainda não foram cadastrados."""
-    
     new_columns = []
     for col in uploaded_df.columns:
         col_str = str(col).strip()
@@ -300,9 +312,7 @@ def process_single_sheet_update(sheet_name, uploaded_df):
         return False, erro
 
     uploaded_df = uploaded_df.fillna("-").astype(str)
-
     existing_keys_in_db = get_existing_timestamps_for_sheet(sheet_name)
-
     new_logs = []
     now_br = get_now_br()
 
@@ -352,44 +362,43 @@ def process_single_sheet_update(sheet_name, uploaded_df):
 
     return True, None
 
-def fetch_and_process_sheet(name, sheet_url, headers):
+def fetch_and_process_sheet(name, sheet_id, client):
+    """Consulta a planilha privada utilizando a API do Google via gspread."""
     try:
-        csv_url = convert_to_gviz_url(sheet_url, sheet_name=NOME_ABA_LOG)
-        response = requests.get(csv_url, headers=headers, timeout=15)
+        spreadsheet = client.open_by_key(sheet_id)
         
-        if response.status_code == 200:
-            corpo = response.text.strip()
-            if corpo.startswith("<") or "google-viz-error" in corpo.lower():
-                return False, f"❌ **Erro na '{name}'**: A aba '{NOME_ABA_LOG}' não foi encontrada ou a planilha não está compartilhada como 'Qualquer pessoa com o link'."
+        try:
+            worksheet = spreadsheet.worksheet(NOME_ABA_LOG)
+        except gspread.exceptions.WorksheetNotFound:
+            return False, f"❌ **Erro na '{name}'**: A aba '{NOME_ABA_LOG}' não foi encontrada."
 
-            df_dl = pd.read_csv(io.StringIO(response.text), dtype=str)
-            success, msg = process_single_sheet_update(name, df_dl)
-            if success:
-                return True, msg
-            return False, msg
-        elif response.status_code in (400, 404):
-            return False, f"❌ **Erro na '{name}'**: Aba ou planilha não encontrada."
-        elif response.status_code == 403:
-            return False, f"❌ **Erro 403 na '{name}'**: Acesso negado. Verifique as permissões."
+        data = worksheet.get_all_records()
+        
+        if not data:
+            # Tenta pegar todos os valores caso não haja cabeçalho padrão
+            values = worksheet.get_all_values()
+            if not values:
+                return True, None # Planilha vazia
+            df_dl = pd.DataFrame(values[1:], columns=values[0])
         else:
-            return False, f"❌ Erro HTTP {response.status_code} na planilha '{name}'."
+            df_dl = pd.DataFrame(data)
+
+        success, msg = process_single_sheet_update(name, df_dl)
+        return success, msg
+
+    except gspread.exceptions.APIError as e:
+        return False, f"❌ **Erro na API do Google para '{name}'**: {e.response.json().get('error', {}).get('message', str(e))}"
     except Exception as e:
         return False, f"❌ Erro inesperado ao processar '{name}': {e}"
 
 def executar_sincronizacao():
     sucessos = 0
-    headers = {
-        'User-Agent': (
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-            'AppleWebKit/537.36 (KHTML, like Gecko) '
-            'Chrome/120.0.0.0 Safari/537.36'
-        )
-    }
+    client = init_gspread_client()
 
     with ThreadPoolExecutor(max_workers=5) as executor:
         futures = [
-            executor.submit(fetch_and_process_sheet, name, url, headers)
-            for name, url in LISTA_PLANILHAS.items()
+            executor.submit(fetch_and_process_sheet, name, sheet_id, client)
+            for name, sheet_id in LISTA_PLANILHAS.items()
         ]
 
         for future in as_completed(futures):
@@ -464,7 +473,6 @@ def generate_pdf(logs_filtered, start_date, end_date) -> bytes:
     pdf.cell(0, 8, sanitize_pdf_text(f"Periodo selecionado: {str_inicio} a {str_fim}"), new_x="LMARGIN", new_y="NEXT")
     pdf.cell(0, 8, sanitize_pdf_text(f"Total de Registros: {len(logs_filtered)}"), new_x="LMARGIN", new_y="NEXT")
 
-    # --- DIGITADOR E IMPORTADOR COM MAIS ATIVIDADE NO PERÍODO ---
     digitador_counter = Counter()
     importador_counter = Counter()
     importador_pattern = re.compile(r"—\s*\[(.*?)\]\s*—")
@@ -480,7 +488,6 @@ def generate_pdf(logs_filtered, start_date, end_date) -> bytes:
             if importador and importador not in ("-", "nan", "None"):
                 importador_counter[importador] += 1
 
-    # Mantém negrito e tamanho 11, igual ao "Total de Registros"
     if digitador_counter:
         top_digitador, qtd_digitador = digitador_counter.most_common(1)[0]
         pdf.cell(
@@ -497,14 +504,12 @@ def generate_pdf(logs_filtered, start_date, end_date) -> bytes:
             new_x="LMARGIN", new_y="NEXT"
         )
 
-    # --- LINHA SEPARADORA (efeito "meio transparente") ---
     pdf.ln(3)
-    pdf.set_draw_color(220, 220, 220)  # cinza bem claro, simula transparência
+    pdf.set_draw_color(220, 220, 220)
     pdf.set_line_width(0.3)
     pdf.line(pdf.get_x(), pdf.get_y(), pdf.get_x() + 190, pdf.get_y())
     pdf.ln(5)
 
-    # --- CORPO: LISTA DE REGISTROS ---
     pdf.set_font("Helvetica", "", 9)
     for item in logs_filtered:
         mensagem = item.get("mensagem", "")
@@ -521,7 +526,6 @@ def generate_pdf(logs_filtered, start_date, end_date) -> bytes:
         pdf.set_text_color(*PDF_BLACK)
         pdf.ln(6)
 
-    # --- FINALIZA E RETORNA OS BYTES DO PDF ---
     output = pdf.output()
     return bytes(output)
 
@@ -554,11 +558,11 @@ if not st.session_state.authenticated:
 # ==========================================
 # EXECUÇÃO AUTOMÁTICA DE SINCRONIZAÇÃO A CADA LOOP
 # ==========================================
-with st.spinner("Sincronizando planilhas em segundo plano..."):
+with st.spinner("Sincronizando planilhas protegidas em segundo plano..."):
     qtd_sucesso = executar_sincronizacao()
 
 # ==========================================
-# PAINEL PRINCIPAL COM LOGO NO CANTO SUPERIOR DIREITO
+# PAINEL PRINCIPAL
 # ==========================================
 col_titulo, col_logo = st.columns([0.88, 0.12], vertical_alignment="center")
 
@@ -607,7 +611,7 @@ else:
 
 st.divider()
 
-# --- LÓGICA DE CÁLCULO DE AÇÕES AGRUPADAS (> 2 MINUTOS POR DIGITADOR) ---
+# --- LÓGICA DE CÁLCULO DE AÇÕES AGRUPADAS ---
 total_acoes_agrupadas = 0
 
 if not df_logs_periodo.empty:
@@ -671,7 +675,7 @@ if not df_logs_periodo.empty:
 else:
     st.info("Nenhuma atividade registrada no período selecionado.")
 
-# -- LOG ATIVIDADES ---
+# --- LOG ATIVIDADES ---
 st.markdown("**Histórico de Eventos:**")
 log_container = st.container(height=380, border=True)
 
@@ -747,7 +751,7 @@ with log_container:
         st.write("Nenhum registro encontrado para os filtros selecionados.")
 
 # ==========================================
-# EXPORTAÇÃO DO LOG EM PDF (DE ACORDO COM O PERÍODO SELECIONADO)
+# EXPORTAÇÃO DO LOG EM PDF
 # ==========================================
 st.write("")
 
