@@ -150,7 +150,7 @@ def get_now_br() -> datetime:
     """Retorna o datetime atual no fuso de Brasília."""
     return datetime.now(TZ_BR)
 
-st_autorefresh(interval=20000, key="auto_sync_timer")
+st_autorefresh(interval=35000, key="auto_sync_timer")
 
 # ==========================================
 # CONEXÃO COM O SUPABASE
