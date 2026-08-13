@@ -16,6 +16,19 @@ from streamlit_autorefresh import st_autorefresh
 import base64
 import gspread
 from google.oauth2.service_account import Credentials
+from googleapiclient.errors import HttpError
+
+def fetch_with_backoff(request_func, retries=5):
+    delay = 2
+    for attempt in range(retries):
+        try:
+            return request_func()
+        except HttpError as e:
+            if e.resp.status == 429 and attempt < retries - 1:
+                time.sleep(delay)
+                delay *= 2  # Dobra o tempo de espera (2s, 4s, 8s, 16s...)
+            else:
+                raise
 
 # ==========================================
 # CONFIGURAÇÃO DE BORDAS E ESPAÇAMENTO DO STREAMLIT
