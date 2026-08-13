@@ -238,7 +238,7 @@ def get_existing_timestamps_for_sheet(sheet_name: str) -> set:
         )
         if response.data:
             return {
-                f"{row.get('referencia', '').strip()}_{row.get('digitador', '').strip()}_{row.get('timestamp', '').strip()}"
+                f"{str(row.get('referencia', '')).strip()}_{str(row.get('digitador', '')).strip()}_{str(row.get('timestamp', '')).strip()}"
                 for row in response.data
             }
         return set()
@@ -331,9 +331,13 @@ def process_single_sheet_update(sheet_name, uploaded_df):
                 f"Ação: {observacao} — Referência: {ref}"
             )
 
+            # Conversão robusta da data histórica da planilha
             try:
-                date_part = data_atualizacao.split()[0]
-                parsed_date = datetime.strptime(date_part, "%d/%m/%Y").strftime("%Y-%m-%d")
+                dt_obj = pd.to_datetime(data_atualizacao, dayfirst=True, errors="coerce")
+                if pd.notna(dt_obj):
+                    parsed_date = dt_obj.strftime("%Y-%m-%d")
+                else:
+                    parsed_date = now_br.strftime("%Y-%m-%d")
             except Exception:
                 parsed_date = now_br.strftime("%Y-%m-%d")
 
@@ -354,15 +358,15 @@ def process_single_sheet_update(sheet_name, uploaded_df):
     return True, None
 
 # ==========================================
-# LEITURA DE PLANILHA VIA REQUISIÇÃO DIRECT CSV
+# LEITURA DE PLANILHA VIA REQUISIÇÃO DIRECT CSV (SEM CORTE DE LINHAS)
 # ==========================================
 def fetch_and_process_sheet(name, sheet_id, token):
-    """Lê a planilha privada via requisição HTTP CSV."""
+    """Lê a aba LOG inteira da planilha via requisição HTTP CSV sem paginação."""
     try:
-        url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={NOME_ABA_LOG}"
+        url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={NOME_ABA_LOG}&tq=select%20*"
         headers = {"Authorization": f"Bearer {token}"}
         
-        response = requests.get(url, headers=headers, timeout=15)
+        response = requests.get(url, headers=headers, timeout=20)
         
         if response.status_code == 404:
             return False, f"❌ **Erro na '{name}'**: A aba '{NOME_ABA_LOG}' ou a planilha não foi encontrada."
@@ -548,7 +552,7 @@ if not st.session_state.authenticated:
 # ==========================================
 # EXECUÇÃO AUTOMÁTICA DE SINCRONIZAÇÃO A CADA LOOP
 # ==========================================
-with st.spinner("Sincronizando planilhas protegidas em segundo plano..."):
+with st.spinner("Sincronizando histórico completo das planilhas..."):
     qtd_sucesso = executar_sincronizacao()
 
 # ==========================================
@@ -631,8 +635,8 @@ if not df_logs_periodo.empty:
     if col_data and col_digitador:
         df_sorted = df_logs_periodo.sort_values(by=[col_digitador, col_data]).copy()
         
-        # Converte string formatada DD/MM/YYYY HH:MM:SS para Datetime
-        df_sorted["dt_parsed"] = pd.to_datetime(df_sorted[col_data], format="%d/%m/%Y %H:%M:%S", errors="coerce")
+        # Converte string formatada para Datetime
+        df_sorted["dt_parsed"] = pd.to_datetime(df_sorted[col_data], dayfirst=True, errors="coerce")
         df_sorted["diff_tempo"] = df_sorted.groupby(col_digitador)["dt_parsed"].diff()
         
         # Considera nova ação se o intervalo entre edições for superior a 2 minutos (120 seg)
@@ -714,7 +718,9 @@ if logs_periodo:
 def obter_data_log(entry):
     timestamp_str = entry.get("timestamp", "")
     try:
-        return datetime.strptime(timestamp_str, "%d/%m/%Y %H:%M:%S")
+        dt_conv = pd.to_datetime(timestamp_str, dayfirst=True, errors="coerce")
+        if pd.notna(dt_conv):
+            return dt_conv.to_pydatetime()
     except Exception:
         pass
 
