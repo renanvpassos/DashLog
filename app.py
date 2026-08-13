@@ -603,12 +603,19 @@ with col_search:
         placeholder="Nome do digitador, importador ou referência..."
     )
 
-logs_periodo = load_logs_by_period(dt_inicio, dt_fim)
+# --- GARANTE ESTABILIDADE NO REFRESH VIA SESSION STATE ---
+# Buscar logs e salvar no estado da sessão para evitar perda visual nas abas durante requisições
+logs_periodo_brutos = load_logs_by_period(dt_inicio, dt_fim)
 
-if logs_periodo:
-    df_logs_periodo = pd.DataFrame(logs_periodo)
-else:
-    df_logs_periodo = pd.DataFrame(columns=["timestamp", "date", "sheet_name", "digitador", "referencia", "mensagem"])
+if logs_periodo_brutos:
+    st.session_state["df_logs_periodo"] = pd.DataFrame(logs_periodo_brutos)
+elif "df_logs_periodo" not in st.session_state or (dt_inicio != st.session_state.get("last_dt_inicio") or dt_fim != st.session_state.get("last_dt_fim")):
+    st.session_state["df_logs_periodo"] = pd.DataFrame(columns=["timestamp", "date", "sheet_name", "digitador", "referencia", "mensagem"])
+
+st.session_state["last_dt_inicio"] = dt_inicio
+st.session_state["last_dt_fim"] = dt_fim
+
+df_logs_periodo = st.session_state["df_logs_periodo"]
 
 st.divider()
 
@@ -639,26 +646,27 @@ if not df_logs_periodo.empty:
         )
         total_acoes_agrupadas = len(df_logs_periodo)
         df_acoes_filtradas = df_logs_periodo.copy()
+else:
+    df_acoes_filtradas = pd.DataFrame(columns=["sheet_name", "digitador", "referencia"])
 
 # --- ESTATÍSTICAS BASEADAS NO PERÍODO SELECIONADO ---
 st.subheader(f"📈 Estatísticas no Período ({dt_inicio.strftime('%d/%m/%Y')} a {dt_fim.strftime('%d/%m/%Y')})")
 
-# 1. Definimos a lista completa de planilhas esperadas (com base nos secrets)
-todas_planilhas_configuradas = sorted(list(LISTA_PLANILHAS.keys()))
-planilhas_para_abas = ["🌐 Consolidado (Todas)"] + todas_planilhas_configuradas
+if not df_logs_periodo.empty:
+    col_m1, col_m2, col_m3 = st.columns(3)
+    
+    col_m1.metric("Ações Registradas no Período", total_acoes_agrupadas)
+    col_m2.metric("Digitadores Ativos", df_logs_periodo["digitador"].nunique())
+    col_m3.metric("Planilhas com Atividade", df_logs_periodo["sheet_name"].nunique())
 
-# 2. Criamos as abas fixas
-tabs = st.tabs(planilhas_para_abas)
-
-# --- ABA 0: Consolidado (Todas) ---
-with tabs[0]:
-    if not df_logs_periodo.empty:
-        col_m1, col_m2, col_m3 = st.columns(3)
-        col_m1.metric("Ações Registradas no Período", total_acoes_agrupadas)
-        col_m2.metric("Digitadores Ativos", df_logs_periodo["digitador"].nunique())
-        col_m3.metric("Planilhas com Atividade", df_logs_periodo["sheet_name"].nunique())
-
-        st.write("")
+    # Seleciona SOMENTE as planilhas que possuem movimentação no período
+    planilhas_com_movimentacao = sorted([p for p in df_logs_periodo["sheet_name"].unique() if p and p != "None"])
+    
+    planilhas_com_log = ["🌐 Consolidado (Todas)"] + planilhas_com_movimentacao
+    tabs = st.tabs(planilhas_com_log)
+    
+    # --- ABA CONSOLIDADO ---
+    with tabs[0]:
         c1, c2 = st.columns(2)
         with c1:
             st.markdown("**Atividades por Digitador (Geral)**")
@@ -666,19 +674,12 @@ with tabs[0]:
         with c2:
             st.markdown("**Atividades por Planilha**")
             st.bar_chart(df_acoes_filtradas["sheet_name"].value_counts())
-    else:
-        st.info("Nenhuma atividade registrada no período selecionado.")
 
-# --- ABAS INDIVIDUAIS: Uma para cada planilha cadastrada ---
-for idx, sheet_key in enumerate(todas_planilhas_configuradas, start=1):
-    with tabs[idx]:
-        if not df_logs_periodo.empty:
-            # Filtra as ações agrupadas para a planilha correspondente à aba
+    # --- ABAS DAS PLANILHAS COM MOVIMENTAÇÃO ---
+    for idx, sheet_key in enumerate(planilhas_com_movimentacao, start=1):
+        with tabs[idx]:
             df_sheet_logs = df_acoes_filtradas[df_acoes_filtradas["sheet_name"] == sheet_key]
-        else:
-            df_sheet_logs = pd.DataFrame()
-
-        if not df_sheet_logs.empty:
+            
             c_s1, c_s2 = st.columns(2)
             with c_s1:
                 st.markdown("**Atividades por Digitador**")
@@ -686,8 +687,8 @@ for idx, sheet_key in enumerate(todas_planilhas_configuradas, start=1):
             with c_s2:
                 st.markdown("**Ações mais Frequentes**")
                 st.bar_chart(df_sheet_logs["referencia"].value_counts().head(10))
-        else:
-            st.info(f"Nenhuma atividade registrada para a **{sheet_key}** no período selecionado.")
+else:
+    st.info("Nenhuma atividade registrada no período selecionado.")
 
 # --- LOG ATIVIDADES ---
 st.markdown("**Histórico de Eventos:**")
