@@ -604,7 +604,6 @@ with col_search:
     )
 
 # --- GARANTE ESTABILIDADE NO REFRESH VIA SESSION STATE ---
-# Buscar logs e salvar no estado da sessão para evitar perda visual nas abas durante requisições
 logs_periodo_brutos = load_logs_by_period(dt_inicio, dt_fim)
 
 if logs_periodo_brutos:
@@ -616,6 +615,7 @@ st.session_state["last_dt_inicio"] = dt_inicio
 st.session_state["last_dt_fim"] = dt_fim
 
 df_logs_periodo = st.session_state["df_logs_periodo"]
+logs_periodo = df_logs_periodo.to_dict("records") if not df_logs_periodo.empty else []
 
 st.divider()
 
@@ -659,8 +659,8 @@ if not df_logs_periodo.empty:
     col_m2.metric("Digitadores Ativos", df_logs_periodo["digitador"].nunique())
     col_m3.metric("Planilhas com Atividade", df_logs_periodo["sheet_name"].nunique())
 
-    # Seleciona SOMENTE as planilhas que possuem movimentação no período
-    planilhas_com_movimentacao = sorted([p for p in df_logs_periodo["sheet_name"].unique() if p and p != "None"])
+    # Exibe APENAS planilhas com movimentação no período selecionado
+    planilhas_com_movimentacao = sorted([p for p in df_logs_periodo["sheet_name"].unique() if p and p not in ["None", "nan", "-"]])
     
     planilhas_com_log = ["🌐 Consolidado (Todas)"] + planilhas_com_movimentacao
     tabs = st.tabs(planilhas_com_log)
@@ -675,7 +675,7 @@ if not df_logs_periodo.empty:
             st.markdown("**Atividades por Planilha**")
             st.bar_chart(df_acoes_filtradas["sheet_name"].value_counts())
 
-    # --- ABAS DAS PLANILHAS COM MOVIMENTAÇÃO ---
+    # --- ABAS INDIVIDUAIS (Com Movimentação) ---
     for idx, sheet_key in enumerate(planilhas_com_movimentacao, start=1):
         with tabs[idx]:
             df_sheet_logs = df_acoes_filtradas[df_acoes_filtradas["sheet_name"] == sheet_key]
