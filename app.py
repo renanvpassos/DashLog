@@ -251,45 +251,41 @@ def get_existing_timestamps_for_sheet(sheet_name: str) -> set:
         )
         if response.data:
             return {
-                f"{str(row.get('referencia', '')).strip()}_{str(row.get('digitador', '')).strip()}_{str(row.get('timestamp', '')).strip()}"
+                f"{str(row.get('referencia', '')).strip().upper()}_"
+                f"{str(row.get('digitador', '')).strip().upper()}_"
+                f"{str(row.get('timestamp', '')).strip().upper()}"
                 for row in response.data
             }
         return set()
     except Exception:
         return set()
 
+
+# ==========================================
+# GERENCIAMENTO DE LOGS VIA SUPABASE
+# ==========================================
 def add_log_entries_bulk(logs_list):
     if not logs_list:
         return
-    
     chunk_size = 500
     for i in range(0, len(logs_list), chunk_size):
-        chunk = logs_list[i : i + chunk_size]
+        chunk = logs_list[i: i + chunk_size]
         try:
+            # Inserção direta permitindo todas as entradas (inclusive duplicadas)
             supabase.table("atividades").insert(chunk).execute()
         except Exception as e:
             st.error(f"Erro ao salvar lote de registros no Supabase: {e}")
 
+
 # ==========================================
 # TRATAMENTO DE TEXTO E PROCESSAMENTO
 # ==========================================
-def normalize_text(text: str) -> str:
-    text_str = str(text).strip()
-    try:
-        text_str = text_str.encode('latin1').decode('utf-8')
-    except (UnicodeEncodeError, UnicodeDecodeError):
-        pass
-        
-    nfkd_form = unicodedata.normalize('NFKD', text_str)
-    only_ascii = "".join([c for c in nfkd_form if not unicodedata.combining(c)])
-    return only_ascii.upper()
-
 def process_single_sheet_update(sheet_name, uploaded_df):
     new_columns = []
     for col in uploaded_df.columns:
         col_str = str(col).strip()
         norm_col = normalize_text(col_str)
-        
+
         if "REFERENC" in norm_col or "REFERANC" in norm_col:
             new_columns.append("REFERÊNCIA")
         elif "IMPORTAD" in norm_col:
@@ -302,12 +298,12 @@ def process_single_sheet_update(sheet_name, uploaded_df):
             new_columns.append("OBSERVAÇÃO")
         else:
             new_columns.append(col_str)
-            
+
     uploaded_df.columns = new_columns
 
     req_cols = ["REFERÊNCIA", "DIGITADOR", "DATA ATUALIZAÇÃO"]
     missing = [col for col in req_cols if col not in uploaded_df.columns]
-    
+
     if missing:
         erro = (
             f"❌ A aba '{NOME_ABA_LOG}' da planilha '{sheet_name}' não possui as colunas necessárias: {', '.join(missing)}.\n\n"
@@ -316,11 +312,10 @@ def process_single_sheet_update(sheet_name, uploaded_df):
         return False, erro
 
     uploaded_df = uploaded_df.fillna("-").astype(str)
-    
-    # 1. REMOVE DUPLICADAS EXATAS VINDA DA PRÓPRIA PLANILHA
-    uploaded_df = uploaded_df.drop_duplicates(subset=req_cols)
 
-    existing_keys_in_db = get_existing_timestamps_for_sheet(sheet_name)
+    # NOTA: A remoção de duplicatas via drop_duplicates foi removida daqui
+    # para garantir a preservação de todas as linhas do log.
+
     new_logs = []
     now_br = get_now_br()
 
@@ -332,44 +327,37 @@ def process_single_sheet_update(sheet_name, uploaded_df):
         if not digitador or digitador in ["-", "nan", "None"] or not ref or ref in ["-", "nan", "None"]:
             continue
 
-        # 2. CHAVE DE COMPARAÇÃO NORMALIZADA (Sem espaços extras, case-insensitive)
-        row_key = f"{ref.upper()}_{digitador.upper()}_{data_atualizacao.upper()}"
+        importador = row.get("IMPORTADOR", "-").strip()
+        if importador in ["nan", "None", ""]:
+            importador = "-"
 
-        if row_key not in existing_keys_in_db:
-            importador = row.get("IMPORTADOR", "-").strip()
-            if importador in ["nan", "None", ""]:
-                importador = "-"
+        observacao = row.get("OBSERVAÇÃO", "-").strip()
+        if observacao in ["nan", "None", ""]:
+            observacao = "-"
 
-            observacao = row.get("OBSERVAÇÃO", "-").strip()
-            if observacao in ["nan", "None", ""]:
-                observacao = "-"
+        msg_log = (
+            f"{data_atualizacao} — [{importador}] — {digitador} — "
+            f"Ação: {observacao} — Referência: {ref}"
+        )
 
-            msg_log = (
-                f"{data_atualizacao} — [{importador}] — {digitador} — "
-                f"Ação: {observacao} — Referência: {ref}"
-            )
-
-            # Conversão robusta de data
-            try:
-                dt_obj = pd.to_datetime(data_atualizacao, dayfirst=True, errors="coerce")
-                if pd.notna(dt_obj):
-                    parsed_date = dt_obj.strftime("%Y-%m-%d")
-                else:
-                    parsed_date = now_br.strftime("%Y-%m-%d")
-            except Exception:
+        # Conversão robusta de data
+        try:
+            dt_obj = pd.to_datetime(data_atualizacao, dayfirst=True, errors="coerce")
+            if pd.notna(dt_obj):
+                parsed_date = dt_obj.strftime("%Y-%m-%d")
+            else:
                 parsed_date = now_br.strftime("%Y-%m-%d")
+        except Exception:
+            parsed_date = now_br.strftime("%Y-%m-%d")
 
-            new_logs.append({
-                "timestamp": data_atualizacao,
-                "date": parsed_date,
-                "sheet_name": str(sheet_name),
-                "digitador": str(digitador),
-                "referencia": str(ref),
-                "mensagem": msg_log
-            })
-            
-            # 3. EVITA DUPLICAR NO MESMO BATCH
-            existing_keys_in_db.add(row_key)
+        new_logs.append({
+            "timestamp": data_atualizacao,
+            "date": parsed_date,
+            "sheet_name": str(sheet_name),
+            "digitador": str(digitador),
+            "referencia": str(ref),
+            "mensagem": msg_log
+        })
 
     if new_logs:
         add_log_entries_bulk(new_logs)
