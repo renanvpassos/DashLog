@@ -251,19 +251,19 @@ def load_logs_by_period(start_date: date, end_date: date):
         return []
 
 
-def get_existing_timestamps_for_sheet(sheet_name: str) -> set:
+def get_existing_signatures_for_sheet(sheet_name: str) -> set:
+    """Busca os registros existentes da planilha para evitar re-inserção a cada 20s."""
     try:
         response = (
             supabase.table("atividades")
-            .select("timestamp, referencia, digitador")
+            .select("timestamp, referencia, digitador, mensagem")
             .eq("sheet_name", sheet_name)
             .execute()
         )
         if response.data:
+            # Retorna conjunto das mensagens exatas + timestamp já salvos no banco
             return {
-                f"{str(row.get('referencia', '')).strip().upper()}_"
-                f"{str(row.get('digitador', '')).strip().upper()}_"
-                f"{str(row.get('timestamp', '')).strip().upper()}"
+                f"{row.get('timestamp', '')}_{row.get('mensagem', '')}"
                 for row in response.data
             }
         return set()
@@ -271,9 +271,6 @@ def get_existing_timestamps_for_sheet(sheet_name: str) -> set:
         return set()
 
 
-# ==========================================
-# GERENCIAMENTO DE LOGS VIA SUPABASE
-# ==========================================
 def add_log_entries_bulk(logs_list):
     if not logs_list:
         return
@@ -281,13 +278,7 @@ def add_log_entries_bulk(logs_list):
     for i in range(0, len(logs_list), chunk_size):
         chunk = logs_list[i: i + chunk_size]
         try:
-            # O upsert usando a combinação com o 'linha_idx' impede que a sincronização automática
-            # insira novamente as mesmas linhas a cada 20s.
-            supabase.table("atividades").upsert(
-                chunk,
-                on_conflict="sheet_name,referencia,digitador,timestamp,linha_idx",
-                ignore_duplicates=True
-            ).execute()
+            supabase.table("atividades").insert(chunk).execute()
         except Exception as e:
             st.error(f"Erro ao salvar lote de registros no Supabase: {e}")
 
@@ -340,13 +331,19 @@ def process_single_sheet_update(sheet_name, uploaded_df):
 
     uploaded_df = uploaded_df.fillna("-").astype(str)
 
+    # Conta a frequência com que cada registro aparece na própria planilha
+    # Isso garante que se a planilha tiver duplicatas idênticas no mesmo horário, elas serão salvas
+    uploaded_df['dup_counter'] = uploaded_df.groupby(["DATA ATUALIZAÇÃO", "DIGITADOR", "REFERÊNCIA"]).cumcount()
+
+    existing_signatures = get_existing_signatures_for_sheet(sheet_name)
     new_logs = []
     now_br = get_now_br()
 
-    for idx, row in uploaded_df.iterrows():
+    for _, row in uploaded_df.iterrows():
         digitador = row.get("DIGITADOR", "-").strip()
         ref = row.get("REFERÊNCIA", "-").strip()
         data_atualizacao = row.get("DATA ATUALIZAÇÃO", "-").strip()
+        dup_counter = row.get("dup_counter", 0)
 
         if not digitador or digitador in ["-", "nan", "None"] or not ref or ref in ["-", "nan", "None"]:
             continue
@@ -364,29 +361,35 @@ def process_single_sheet_update(sheet_name, uploaded_df):
             f"Ação: {observacao} — Referência: {ref}"
         )
 
-        try:
-            dt_obj = pd.to_datetime(data_atualizacao, dayfirst=True, errors="coerce")
-            if pd.notna(dt_obj):
-                parsed_date = dt_obj.strftime("%Y-%m-%d")
-            else:
-                parsed_date = now_br.strftime("%Y-%m-%d")
-        except Exception:
-            parsed_date = now_br.strftime("%Y-%m-%d")
+        # Assinatura única por ocorrência (se houver duplicata na planilha, dup_counter altera o hash)
+        sig_key = f"{data_atualizacao}_{msg_log}" if dup_counter == 0 else f"{data_atualizacao}_{msg_log} [dup:{dup_counter}]"
 
-        new_logs.append({
-            "timestamp": data_atualizacao,
-            "date": parsed_date,
-            "sheet_name": str(sheet_name),
-            "digitador": str(digitador),
-            "referencia": str(ref),
-            "mensagem": msg_log,
-            "linha_idx": int(idx)
-        })
+        # Apenas adiciona ao banco se for um registro novo que ainda não existe na base
+        if sig_key not in existing_signatures:
+            try:
+                dt_obj = pd.to_datetime(data_atualizacao, dayfirst=True, errors="coerce")
+                if pd.notna(dt_obj):
+                    parsed_date = dt_obj.strftime("%Y-%m-%d")
+                else:
+                    parsed_date = now_br.strftime("%Y-%m-%d")
+            except Exception:
+                parsed_date = now_br.strftime("%Y-%m-%d")
+
+            new_logs.append({
+                "timestamp": data_atualizacao,
+                "date": parsed_date,
+                "sheet_name": str(sheet_name),
+                "digitador": str(digitador),
+                "referencia": str(ref),
+                "mensagem": msg_log
+            })
+            existing_signatures.add(sig_key)
 
     if new_logs:
         add_log_entries_bulk(new_logs)
 
     return True, None
+
 
 # ==========================================
 # LEITURA DE PLANILHA VIA REQUISIÇÃO DIRECT CSV
