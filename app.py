@@ -295,6 +295,18 @@ def add_log_entries_bulk(logs_list):
 # ==========================================
 # TRATAMENTO DE TEXTO E PROCESSAMENTO
 # ==========================================
+def normalize_text(text: str) -> str:
+    text_str = str(text).strip()
+    try:
+        text_str = text_str.encode('latin1').decode('utf-8')
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        pass
+
+    nfkd_form = unicodedata.normalize('NFKD', text_str)
+    only_ascii = "".join([c for c in nfkd_form if not unicodedata.combining(c)])
+    return only_ascii.upper()
+
+
 def process_single_sheet_update(sheet_name, uploaded_df):
     new_columns = []
     for col in uploaded_df.columns:
@@ -331,7 +343,6 @@ def process_single_sheet_update(sheet_name, uploaded_df):
     new_logs = []
     now_br = get_now_br()
 
-    # idx identifica a posição física exata da linha na planilha
     for idx, row in uploaded_df.iterrows():
         digitador = row.get("DIGITADOR", "-").strip()
         ref = row.get("REFERÊNCIA", "-").strip()
@@ -369,7 +380,7 @@ def process_single_sheet_update(sheet_name, uploaded_df):
             "digitador": str(digitador),
             "referencia": str(ref),
             "mensagem": msg_log,
-            "linha_idx": int(idx)  # Registra o índice da linha na planilha
+            "linha_idx": int(idx)
         })
 
     if new_logs:
