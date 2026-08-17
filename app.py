@@ -161,14 +161,16 @@ supabase = init_supabase()
 # GERADOR DE TOKEN GOOGLE OAUTH2
 # ==========================================
 @st.cache_resource
-def get_google_access_token() -> str:
-    """Gera o Access Token utilizando as credenciais da Service Account."""
+def get_google_credentials() -> Credentials:
+    """Cria (uma única vez) o objeto de credenciais da Service Account.
+    Não cacheia o token final, pois ele expira em ~1h — o objeto
+    Credentials precisa persistir para poder ser renovado quando expirar."""
     try:
         scopes = [
             "https://www.googleapis.com/auth/spreadsheets.readonly",
             "https://www.googleapis.com/auth/drive.readonly"
         ]
-        
+
         if "gcp_service_account" in st.secrets:
             creds_dict = dict(st.secrets["gcp_service_account"])
         else:
@@ -185,9 +187,20 @@ def get_google_access_token() -> str:
                 "client_x509_cert_url": st.secrets.get("client_x509_cert_url")
             }
 
-        credentials = Credentials.from_service_account_info(creds_dict, scopes=scopes)
-        auth_req = google.auth.transport.requests.Request()
-        credentials.refresh(auth_req)
+        return Credentials.from_service_account_info(creds_dict, scopes=scopes)
+    except Exception as e:
+        st.error(f"❌ Erro ao carregar Credenciais do Google: {e}")
+        st.stop()
+
+def get_google_access_token() -> str:
+    """Retorna um Access Token válido, renovando automaticamente se
+    estiver expirado ou ainda não tiver sido gerado (evita o erro 401
+    que ocorria quando o token cacheado expirava após ~1h)."""
+    try:
+        credentials = get_google_credentials()
+        if not credentials.valid or credentials.expired:
+            auth_req = google.auth.transport.requests.Request()
+            credentials.refresh(auth_req)
         return credentials.token
     except Exception as e:
         st.error(f"❌ Erro ao obter Token de Acesso do Google: {e}")
