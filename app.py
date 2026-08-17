@@ -271,6 +271,9 @@ def get_existing_timestamps_for_sheet(sheet_name: str) -> set:
         return set()
 
 
+# ==========================================
+# GERENCIAMENTO DE LOGS VIA SUPABASE
+# ==========================================
 def add_log_entries_bulk(logs_list):
     if not logs_list:
         return
@@ -278,8 +281,13 @@ def add_log_entries_bulk(logs_list):
     for i in range(0, len(logs_list), chunk_size):
         chunk = logs_list[i: i + chunk_size]
         try:
-            # Inserção direta no Supabase para manter todas as entradas
-            supabase.table("atividades").insert(chunk).execute()
+            # O upsert usando a combinação com o 'linha_idx' impede que a sincronização automática
+            # insira novamente as mesmas linhas a cada 20s.
+            supabase.table("atividades").upsert(
+                chunk,
+                on_conflict="sheet_name,referencia,digitador,timestamp,linha_idx",
+                ignore_duplicates=True
+            ).execute()
         except Exception as e:
             st.error(f"Erro ao salvar lote de registros no Supabase: {e}")
 
@@ -287,18 +295,6 @@ def add_log_entries_bulk(logs_list):
 # ==========================================
 # TRATAMENTO DE TEXTO E PROCESSAMENTO
 # ==========================================
-def normalize_text(text: str) -> str:
-    text_str = str(text).strip()
-    try:
-        text_str = text_str.encode('latin1').decode('utf-8')
-    except (UnicodeEncodeError, UnicodeDecodeError):
-        pass
-
-    nfkd_form = unicodedata.normalize('NFKD', text_str)
-    only_ascii = "".join([c for c in nfkd_form if not unicodedata.combining(c)])
-    return only_ascii.upper()
-
-
 def process_single_sheet_update(sheet_name, uploaded_df):
     new_columns = []
     for col in uploaded_df.columns:
@@ -335,7 +331,8 @@ def process_single_sheet_update(sheet_name, uploaded_df):
     new_logs = []
     now_br = get_now_br()
 
-    for _, row in uploaded_df.iterrows():
+    # idx identifica a posição física exata da linha na planilha
+    for idx, row in uploaded_df.iterrows():
         digitador = row.get("DIGITADOR", "-").strip()
         ref = row.get("REFERÊNCIA", "-").strip()
         data_atualizacao = row.get("DATA ATUALIZAÇÃO", "-").strip()
@@ -371,14 +368,14 @@ def process_single_sheet_update(sheet_name, uploaded_df):
             "sheet_name": str(sheet_name),
             "digitador": str(digitador),
             "referencia": str(ref),
-            "mensagem": msg_log
+            "mensagem": msg_log,
+            "linha_idx": int(idx)  # Registra o índice da linha na planilha
         })
 
     if new_logs:
         add_log_entries_bulk(new_logs)
 
     return True, None
-
 
 # ==========================================
 # LEITURA DE PLANILHA VIA REQUISIÇÃO DIRECT CSV
