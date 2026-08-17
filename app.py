@@ -367,23 +367,34 @@ def process_single_sheet_update(sheet_name, uploaded_df):
 # LEITURA DE PLANILHA VIA REQUISIÇÃO DIRECT CSV (SEM CORTE DE LINHAS)
 # ==========================================
 def fetch_and_process_sheet(name, sheet_id, token):
-    """Lê a aba LOG inteira da planilha via requisição HTTP CSV sem paginação."""
+    """Lê a aba LOG inteira da planilha via API oficial do Google Sheets v4."""
     try:
-        url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={NOME_ABA_LOG}&tq=select%20*"
+        range_ = f"{NOME_ABA_LOG}"
+        url = f"https://sheets.googleapis.com/v4/spreadsheets/{sheet_id}/values/{range_}"
         headers = {"Authorization": f"Bearer {token}"}
-        
-        response = requests.get(url, headers=headers, timeout=20)
-        
+        params = {"valueRenderOption": "UNFORMATTED_VALUE", "dateTimeRenderOption": "FORMATTED_STRING"}
+
+        response = requests.get(url, headers=headers, params=params, timeout=20)
+
         if response.status_code == 404:
             return False, f"❌ **Erro na '{name}'**: A aba '{NOME_ABA_LOG}' ou a planilha não foi encontrada."
+        elif response.status_code == 403:
+            return False, f"❌ **Erro na '{name}'**: Sem permissão. Verifique se a planilha foi compartilhada com o e-mail da Service Account."
         elif response.status_code != 200:
             return False, f"❌ Erro HTTP {response.status_code} ao buscar '{name}'."
 
-        csv_content = response.content
-        df_dl = pd.read_csv(io.BytesIO(csv_content))
+        data = response.json()
+        values = data.get("values", [])
 
-        if df_dl.empty:
+        if not values or len(values) < 2:
             return True, None
+
+        header, *rows = values
+        # Normaliza número de colunas (linhas mais curtas viram preenchidas com "")
+        max_len = len(header)
+        rows_fixed = [row + [""] * (max_len - len(row)) for row in rows]
+
+        df_dl = pd.DataFrame(rows_fixed, columns=header)
 
         success, msg = process_single_sheet_update(name, df_dl)
         return success, msg
