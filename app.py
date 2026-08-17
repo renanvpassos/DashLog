@@ -41,7 +41,6 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-
 def get_logo_base64():
     try:
         with open("logoMult.png", "rb") as img_file:
@@ -49,12 +48,11 @@ def get_logo_base64():
     except Exception:
         return "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
 
-
 def exibir_intro():
     """Exibe a intro apenas com o logotipo durante o carregamento"""
     intro_placeholder = st.empty()
     logo_base64 = get_logo_base64()
-
+    
     intro_html = f"""
     <style>
         .intro-container {{
@@ -95,21 +93,21 @@ def exibir_intro():
             100% {{ transform: translateY(0px); }}
         }}
     </style>
-
+    
     <div id="intro-container" class="intro-container">
         <div class="logo-container">
             <img src="data:image/png;base64,{logo_base64}" class="logo-image" alt="Logo">
         </div>
     </div>
-
+    
     <script>
         var percent = 0;
         var container = document.getElementById('intro-container');
-
+        
         var interval = setInterval(function() {{
             percent += Math.floor(Math.random() * 15) + 5;
             if (percent > 100) percent = 100;
-
+            
             if (percent >= 100) {{
                 clearInterval(interval);
                 setTimeout(function() {{
@@ -124,12 +122,11 @@ def exibir_intro():
         }}, 100);
     </script>
     """
-
+    
     intro_placeholder.markdown(intro_html, unsafe_allow_html=True)
     time.sleep(1.5)
     intro_placeholder.empty()
     return intro_placeholder
-
 
 # ==========================================
 # INICIALIZAÇÃO
@@ -140,14 +137,11 @@ if 'intro_exibida' not in st.session_state:
 
 TZ_BR = ZoneInfo("America/Sao_Paulo")
 
-
 def get_now_br() -> datetime:
     """Retorna o datetime atual no fuso de Brasília."""
     return datetime.now(TZ_BR)
 
-
 st_autorefresh(interval=20000, key="auto_sync_timer")
-
 
 # ==========================================
 # CONEXÃO COM O SUPABASE
@@ -161,9 +155,7 @@ def init_supabase() -> Client:
         st.stop()
     return create_client(url, key)
 
-
 supabase = init_supabase()
-
 
 # ==========================================
 # GERADOR DE TOKEN GOOGLE OAUTH2
@@ -198,7 +190,6 @@ def get_google_credentials() -> Credentials:
         st.error(f"❌ Erro ao carregar Credenciais do Google: {e}")
         st.stop()
 
-
 def get_google_access_token() -> str:
     """Retorna um Access Token válido, renovando automaticamente se estiver expirado."""
     try:
@@ -211,17 +202,14 @@ def get_google_access_token() -> str:
         st.error(f"❌ Erro ao obter Token de Acesso do Google: {e}")
         st.stop()
 
-
 # ==========================================
 # EXTRAÇÃO DE ID DAS PLANILHAS
 # ==========================================
 NOME_ABA_LOG = "LOG"
 
-
 def extract_spreadsheet_id(url_or_id: str) -> str:
     match = re.search(r"/d/([a-zA-Z0-9-_]+)", str(url_or_id))
     return match.group(1) if match else str(url_or_id).strip()
-
 
 LISTA_PLANILHAS = {
     f"PLANILHA {nome.replace('_', ' ')}": extract_spreadsheet_id(sheet_id_or_url)
@@ -230,7 +218,6 @@ LISTA_PLANILHAS = {
 
 DATA_DIR = "data"
 os.makedirs(DATA_DIR, exist_ok=True)
-
 
 # ==========================================
 # GERENCIAMENTO DE LOGS VIA SUPABASE
@@ -249,7 +236,6 @@ def load_logs_by_period(start_date: date, end_date: date):
     except Exception as e:
         st.error(f"Erro ao buscar logs do Supabase: {e}")
         return []
-
 
 def get_existing_signatures_for_sheet(sheet_name: str) -> set:
     """Busca os registros existentes da planilha para evitar re-inserção a cada 20s."""
@@ -270,18 +256,16 @@ def get_existing_signatures_for_sheet(sheet_name: str) -> set:
     except Exception:
         return set()
 
-
 def add_log_entries_bulk(logs_list):
     if not logs_list:
         return
     chunk_size = 500
     for i in range(0, len(logs_list), chunk_size):
-        chunk = logs_list[i: i + chunk_size]
+        chunk = logs_list[i : i + chunk_size]
         try:
             supabase.table("atividades").insert(chunk).execute()
         except Exception as e:
             st.error(f"Erro ao salvar lote de registros no Supabase: {e}")
-
 
 # ==========================================
 # TRATAMENTO DE TEXTO E PROCESSAMENTO
@@ -292,18 +276,17 @@ def normalize_text(text: str) -> str:
         text_str = text_str.encode('latin1').decode('utf-8')
     except (UnicodeEncodeError, UnicodeDecodeError):
         pass
-
+        
     nfkd_form = unicodedata.normalize('NFKD', text_str)
     only_ascii = "".join([c for c in nfkd_form if not unicodedata.combining(c)])
     return only_ascii.upper()
-
 
 def process_single_sheet_update(sheet_name, uploaded_df):
     new_columns = []
     for col in uploaded_df.columns:
         col_str = str(col).strip()
         norm_col = normalize_text(col_str)
-
+        
         if "REFERENC" in norm_col or "REFERANC" in norm_col:
             new_columns.append("REFERÊNCIA")
         elif "IMPORTAD" in norm_col:
@@ -316,12 +299,12 @@ def process_single_sheet_update(sheet_name, uploaded_df):
             new_columns.append("OBSERVAÇÃO")
         else:
             new_columns.append(col_str)
-
+            
     uploaded_df.columns = new_columns
 
     req_cols = ["REFERÊNCIA", "DIGITADOR", "DATA ATUALIZAÇÃO"]
     missing = [col for col in req_cols if col not in uploaded_df.columns]
-
+    
     if missing:
         erro = (
             f"❌ A aba '{NOME_ABA_LOG}' da planilha '{sheet_name}' não possui as colunas necessárias: {', '.join(missing)}.\n\n"
@@ -390,7 +373,6 @@ def process_single_sheet_update(sheet_name, uploaded_df):
 
     return True, None
 
-
 # ==========================================
 # LEITURA DE PLANILHA VIA REQUISIÇÃO DIRECT CSV
 # ==========================================
@@ -429,7 +411,6 @@ def fetch_and_process_sheet(name, sheet_id, token):
     except Exception as e:
         return False, f"❌ Erro inesperado ao processar '{name}': {e}"
 
-
 def executar_sincronizacao():
     sucessos = 0
     token = get_google_access_token()
@@ -449,18 +430,15 @@ def executar_sincronizacao():
 
     return sucessos
 
-
 # ==========================================
 # RELATÓRIO PDF
 # ==========================================
 class PDFReport(FPDF):
     def header(self):
         self.set_font("Helvetica", "B", 14)
-        self.cell(0, 10, "Relatorio de Atividades dos Digitadores", border=False, new_x="LMARGIN", new_y="NEXT",
-                  align="C")
+        self.cell(0, 10, "Relatorio de Atividades dos Digitadores", border=False, new_x="LMARGIN", new_y="NEXT", align="C")
         self.set_font("Helvetica", "", 9)
-        self.cell(0, 5, f"Gerado em: {get_now_br().strftime('%d/%m/%Y %H:%M:%S')}", border=False, new_x="LMARGIN",
-                  new_y="NEXT", align="C")
+        self.cell(0, 5, f"Gerado em: {get_now_br().strftime('%d/%m/%Y %H:%M:%S')}", border=False, new_x="LMARGIN", new_y="NEXT", align="C")
         self.ln(5)
 
     def footer(self):
@@ -468,15 +446,12 @@ class PDFReport(FPDF):
         self.set_font("Helvetica", "I", 8)
         self.cell(0, 10, f"Pagina {self.page_no()}/{{nb}}", align="C")
 
-
 def sanitize_pdf_text(text: str) -> str:
     return unicodedata.normalize('NFKD', str(text)).encode('latin-1', 'ignore').decode('latin-1')
-
 
 PDF_RED = (200, 30, 30)
 PDF_BLUE = (41, 128, 185)
 PDF_BLACK = (0, 0, 0)
-
 
 def build_pdf_segments(mensagem: str):
     segments = []
@@ -504,7 +479,6 @@ def build_pdf_segments(mensagem: str):
         segments.append((mensagem[pos:], None))
 
     return segments
-
 
 def generate_pdf(logs_filtered, start_date, end_date) -> bytes:
     pdf = PDFReport()
@@ -575,7 +549,6 @@ def generate_pdf(logs_filtered, start_date, end_date) -> bytes:
     output = pdf.output()
     return bytes(output)
 
-
 # ==========================================
 # TELA DE AUTENTICAÇÃO
 # ==========================================
@@ -590,10 +563,10 @@ if not st.session_state.authenticated:
         with st.container(border=True):
             st.title("🔐 Acesso ao Sistema")
             st.caption("Digite a senha para prosseguir")
-
+            
             pass_required = st.secrets.get("system_password", "multproc")
             password_input = st.text_input("Senha de Acesso", type="password")
-
+            
             if st.button("Entrar", use_container_width=True):
                 if password_input == pass_required:
                     st.session_state.authenticated = True
@@ -619,8 +592,7 @@ with col_titulo:
 with col_logo:
     st.image("logoMult.png", use_container_width=True)
 
-st.caption(
-    f"Monitorando **{len(LISTA_PLANILHAS)}** planilha(s) configurada(s) — dados lidos da aba **'{NOME_ABA_LOG}'**. *(Atenção: Atualiza automaticamente a cada 20 segundos!)*")
+st.caption(f"Monitorando **{len(LISTA_PLANILHAS)}** planilha(s) configurada(s) — dados lidos da aba **'{NOME_ABA_LOG}'**. *(Atenção: Atualiza automaticamente a cada 20 segundos!)*")
 
 st.divider()
 
@@ -661,9 +633,9 @@ else:
 if not df_logs_periodo.empty and "date" in df_logs_periodo.columns:
     df_logs_periodo["parsed_date"] = pd.to_datetime(df_logs_periodo["date"], errors="coerce").dt.date
     df_logs_periodo = df_logs_periodo[
-        (df_logs_periodo["parsed_date"] >= dt_inicio) &
+        (df_logs_periodo["parsed_date"] >= dt_inicio) & 
         (df_logs_periodo["parsed_date"] <= dt_fim)
-        ]
+    ]
 
 st.session_state["df_logs_periodo"] = df_logs_periodo
 st.session_state["last_dt_inicio"] = dt_inicio
@@ -682,17 +654,17 @@ if not df_logs_periodo.empty:
         if candidatos in df_logs_periodo.columns:
             col_data = candidatos
             break
-
+            
     col_digitador = "digitador" if "digitador" in df_logs_periodo.columns else None
 
     if col_data and col_digitador:
         df_sorted = df_logs_periodo.sort_values(by=[col_digitador, col_data]).copy()
-
+        
         df_sorted["dt_parsed"] = pd.to_datetime(df_sorted[col_data], dayfirst=True, errors="coerce")
         df_sorted["diff_tempo"] = df_sorted.groupby(col_digitador)["dt_parsed"].diff()
-
+        
         df_sorted["nova_acao"] = df_sorted["diff_tempo"].isna() | (df_sorted["diff_tempo"].dt.total_seconds() > 120)
-
+        
         total_acoes_agrupadas = int(df_sorted["nova_acao"].sum())
         df_acoes_filtradas = df_sorted[df_sorted["nova_acao"]]
     else:
@@ -706,17 +678,16 @@ st.subheader(f"📈 Estatísticas no Período ({dt_inicio.strftime('%d/%m/%Y')} 
 
 if not df_logs_periodo.empty:
     col_m1, col_m2, col_m3 = st.columns(3)
-
+    
     col_m1.metric("Ações Registradas no Período", total_acoes_agrupadas)
     col_m2.metric("Digitadores Ativos", df_logs_periodo["digitador"].nunique())
     col_m3.metric("Planilhas com Atividade", df_logs_periodo["sheet_name"].nunique())
 
-    planilhas_com_movimentacao = sorted(
-        [p for p in df_logs_periodo["sheet_name"].unique() if p and str(p) not in ["None", "nan", "-"]])
-
+    planilhas_com_movimentacao = sorted([p for p in df_logs_periodo["sheet_name"].unique() if p and str(p) not in ["None", "nan", "-"]])
+    
     planilhas_com_log = ["🌐 Consolidado (Todas)"] + planilhas_com_movimentacao
     tabs = st.tabs(planilhas_com_log)
-
+    
     # --- ABA CONSOLIDADO ---
     with tabs[0]:
         c1, c2 = st.columns(2)
@@ -731,7 +702,7 @@ if not df_logs_periodo.empty:
     for idx, sheet_key in enumerate(planilhas_com_movimentacao, start=1):
         with tabs[idx]:
             df_sheet_logs = df_acoes_filtradas[df_acoes_filtradas["sheet_name"] == sheet_key]
-
+            
             c_s1, c_s2 = st.columns(2)
             with c_s1:
                 st.markdown("**Atividades por Digitador**")
@@ -757,15 +728,14 @@ if logs_periodo:
             sheet = str(log.get("sheet_name", "")).lower()
 
             if (
-                    term in msg
-                    or term in digitador
-                    or term in referencia
-                    or term in sheet
+                term in msg
+                or term in digitador
+                or term in referencia
+                or term in sheet
             ):
                 filtered_logs.append(log)
     else:
         filtered_logs = logs_periodo.copy()
-
 
 def obter_data_log(entry):
     timestamp_str = entry.get("timestamp", "")
@@ -785,7 +755,6 @@ def obter_data_log(entry):
             pass
 
     return datetime.min
-
 
 logs_ordenados = (
     sorted(filtered_logs, key=obter_data_log, reverse=True)
