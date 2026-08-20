@@ -141,7 +141,7 @@ def get_now_br() -> datetime:
     """Retorna o datetime atual no fuso de Brasília."""
     return datetime.now(TZ_BR)
 
-st_autorefresh(interval=20000, key="auto_sync_timer")
+st_autorefresh(interval=60000, key="auto_sync_timer")
 
 # ==========================================
 # CONEXÃO COM O SUPABASE
@@ -592,7 +592,7 @@ with col_titulo:
 with col_logo:
     st.image("logoMult.png", use_container_width=True)
 
-st.caption(f"Monitorando **{len(LISTA_PLANILHAS)}** planilha(s) configurada(s) — dados lidos da aba **'{NOME_ABA_LOG}'**. *(Atenção: Atualiza automaticamente a cada 20 segundos!)*")
+st.caption(f"Monitorando **{len(LISTA_PLANILHAS)}** planilha(s) configurada(s) — dados lidos da aba **'{NOME_ABA_LOG}'**. *(Atenção: Atualiza automaticamente a cada 1 minuto!)*")
 
 st.divider()
 
