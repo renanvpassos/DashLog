@@ -312,30 +312,30 @@ def process_single_sheet_update(sheet_name, uploaded_df):
         )
         return False, erro
 
-        uploaded_df = uploaded_df.fillna("-").astype(str)
+    # Garante que TODAS as colunas fiquem como string antes de qualquer .strip()
+    uploaded_df = uploaded_df.fillna("-").astype(str)
 
-    # Conta a frequência com que cada registro aparece na própria planilha
-    # Isso garante que se a planilha tiver duplicatas idênticas no mesmo horário, elas serão salvas
-    uploaded_df['dup_counter'] = uploaded_df.groupby(["DATA ATUALIZAÇÃO", "DIGITADOR", "REFERÊNCIA"]).cumcount()
+    # Contagem de assinaturas já existentes no banco (Counter permite múltiplas cópias idênticas)
+    existing_counts = get_existing_signatures_for_sheet(sheet_name)
+    # Contagem do que já foi processado nesta própria leitura da planilha
+    used_counts = Counter()
 
-    existing_signatures = get_existing_signatures_for_sheet(sheet_name)
     new_logs = []
     now_br = get_now_br()
 
     for _, row in uploaded_df.iterrows():
-        digitador = row.get("DIGITADOR", "-").strip()
-        ref = row.get("REFERÊNCIA", "-").strip()
-        data_atualizacao = row.get("DATA ATUALIZAÇÃO", "-").strip()
-        dup_counter = row.get("dup_counter", 0)
+        digitador = str(row.get("DIGITADOR", "-")).strip()
+        ref = str(row.get("REFERÊNCIA", "-")).strip()
+        data_atualizacao = str(row.get("DATA ATUALIZAÇÃO", "-")).strip()
 
         if not digitador or digitador in ["-", "nan", "None"] or not ref or ref in ["-", "nan", "None"]:
             continue
 
-        importador = row.get("IMPORTADOR", "-").strip()
+        importador = str(row.get("IMPORTADOR", "-")).strip()
         if importador in ["nan", "None", ""]:
             importador = "-"
 
-        observacao = row.get("OBSERVAÇÃO", "-").strip()
+        observacao = str(row.get("OBSERVAÇÃO", "-")).strip()
         if observacao in ["nan", "None", ""]:
             observacao = "-"
 
@@ -344,11 +344,13 @@ def process_single_sheet_update(sheet_name, uploaded_df):
             f"Ação: {observacao} — Referência: {ref}"
         )
 
-        # Assinatura única por ocorrência (se houver duplicata na planilha, dup_counter altera o hash)
-        sig_key = f"{data_atualizacao}_{msg_log}" if dup_counter == 0 else f"{data_atualizacao}_{msg_log} [dup:{dup_counter}]"
+        sig_key = f"{data_atualizacao}_{msg_log}"
 
-        # Apenas adiciona ao banco se for um registro novo que ainda não existe na base
-        if sig_key not in existing_signatures:
+        # Marca esta ocorrência (a N-ésima vez que essa combinação aparece na planilha, nesta leitura)
+        used_counts[sig_key] += 1
+
+        # Só insere se ainda não temos no banco tantas cópias quanto já vimos até agora na planilha.
+        if used_counts[sig_key] > existing_counts.get(sig_key, 0):
             try:
                 dt_obj = pd.to_datetime(data_atualizacao, dayfirst=True, errors="coerce")
                 if pd.notna(dt_obj):
@@ -362,11 +364,10 @@ def process_single_sheet_update(sheet_name, uploaded_df):
                 "timestamp": data_atualizacao,
                 "date": parsed_date,
                 "sheet_name": str(sheet_name),
-                "digitador": str(digitador),
-                "referencia": str(ref),
+                "digitador": digitador,
+                "referencia": ref,
                 "mensagem": msg_log
             })
-            existing_signatures.add(sig_key)
 
     if new_logs:
         add_log_entries_bulk(new_logs)
