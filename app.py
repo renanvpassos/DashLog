@@ -237,8 +237,8 @@ def load_logs_by_period(start_date: date, end_date: date):
         st.error(f"Erro ao buscar logs do Supabase: {e}")
         return []
 
-def get_existing_signatures_for_sheet(sheet_name: str) -> set:
-    """Busca os registros existentes da planilha para evitar re-inserção a cada 20s."""
+def get_existing_signatures_for_sheet(sheet_name: str) -> Counter:
+    """Busca os registros existentes da planilha e retorna a CONTAGEM de cada timestamp+mensagem já salvo."""
     try:
         response = (
             supabase.table("atividades")
@@ -247,14 +247,13 @@ def get_existing_signatures_for_sheet(sheet_name: str) -> set:
             .execute()
         )
         if response.data:
-            # Retorna conjunto das mensagens exatas + timestamp já salvos no banco
-            return {
+            return Counter(
                 f"{row.get('timestamp', '')}_{row.get('mensagem', '')}"
                 for row in response.data
-            }
-        return set()
+            )
+        return Counter()
     except Exception:
-        return set()
+        return Counter()
 
 def add_log_entries_bulk(logs_list):
     if not logs_list:
@@ -286,7 +285,7 @@ def process_single_sheet_update(sheet_name, uploaded_df):
     for col in uploaded_df.columns:
         col_str = str(col).strip()
         norm_col = normalize_text(col_str)
-        
+
         if "REFERENC" in norm_col or "REFERANC" in norm_col:
             new_columns.append("REFERÊNCIA")
         elif "IMPORTAD" in norm_col:
@@ -299,12 +298,12 @@ def process_single_sheet_update(sheet_name, uploaded_df):
             new_columns.append("OBSERVAÇÃO")
         else:
             new_columns.append(col_str)
-            
+
     uploaded_df.columns = new_columns
 
     req_cols = ["REFERÊNCIA", "DIGITADOR", "DATA ATUALIZAÇÃO"]
     missing = [col for col in req_cols if col not in uploaded_df.columns]
-    
+
     if missing:
         erro = (
             f"❌ A aba '{NOME_ABA_LOG}' da planilha '{sheet_name}' não possui as colunas necessárias: {', '.join(missing)}.\n\n"
@@ -314,11 +313,11 @@ def process_single_sheet_update(sheet_name, uploaded_df):
 
     uploaded_df = uploaded_df.fillna("-").astype(str)
 
-    # Conta a frequência com que cada registro aparece na própria planilha
-    # Isso garante que se a planilha tiver duplicatas idênticas no mesmo horário, elas serão salvas
-    uploaded_df['dup_counter'] = uploaded_df.groupby(["DATA ATUALIZAÇÃO", "DIGITADOR", "REFERÊNCIA"]).cumcount()
+    # Contagem de assinaturas já existentes no banco (permite múltiplas ocorrências idênticas)
+    existing_counts = get_existing_signatures_for_sheet(sheet_name)
+    # Contagem do que já foi "consumido" nesta própria leitura da planilha (inclui o que já existia + o que já foi enfileirado agora)
+    used_counts = Counter()
 
-    existing_signatures = get_existing_signatures_for_sheet(sheet_name)
     new_logs = []
     now_br = get_now_br()
 
@@ -326,7 +325,6 @@ def process_single_sheet_update(sheet_name, uploaded_df):
         digitador = row.get("DIGITADOR", "-").strip()
         ref = row.get("REFERÊNCIA", "-").strip()
         data_atualizacao = row.get("DATA ATUALIZAÇÃO", "-").strip()
-        dup_counter = row.get("dup_counter", 0)
 
         if not digitador or digitador in ["-", "nan", "None"] or not ref or ref in ["-", "nan", "None"]:
             continue
@@ -344,11 +342,14 @@ def process_single_sheet_update(sheet_name, uploaded_df):
             f"Ação: {observacao} — Referência: {ref}"
         )
 
-        # Assinatura única por ocorrência (se houver duplicata na planilha, dup_counter altera o hash)
-        sig_key = f"{data_atualizacao}_{msg_log}" if dup_counter == 0 else f"{data_atualizacao}_{msg_log} [dup:{dup_counter}]"
+        sig_key = f"{data_atualizacao}_{msg_log}"
 
-        # Apenas adiciona ao banco se for um registro novo que ainda não existe na base
-        if sig_key not in existing_signatures:
+        # Marca esta ocorrência (a N-ésima vez que essa combinação aparece na planilha, nesta leitura)
+        used_counts[sig_key] += 1
+
+        # Só insere se ainda não temos no banco tantas cópias quanto já vimos até agora na planilha.
+        # Isso respeita fielmente duplicatas reais da planilha, sem duplicar a cada sync.
+        if used_counts[sig_key] > existing_counts.get(sig_key, 0):
             try:
                 dt_obj = pd.to_datetime(data_atualizacao, dayfirst=True, errors="coerce")
                 if pd.notna(dt_obj):
@@ -366,7 +367,6 @@ def process_single_sheet_update(sheet_name, uploaded_df):
                 "referencia": str(ref),
                 "mensagem": msg_log
             })
-            existing_signatures.add(sig_key)
 
     if new_logs:
         add_log_entries_bulk(new_logs)
