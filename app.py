@@ -52,7 +52,7 @@ def exibir_intro():
     """Exibe a intro apenas com o logotipo durante o carregamento"""
     intro_placeholder = st.empty()
     logo_base64 = get_logo_base64()
-    
+
     intro_html = f"""
     <style>
         .intro-container {{
@@ -93,21 +93,21 @@ def exibir_intro():
             100% {{ transform: translateY(0px); }}
         }}
     </style>
-    
+
     <div id="intro-container" class="intro-container">
         <div class="logo-container">
             <img src="data:image/png;base64,{logo_base64}" class="logo-image" alt="Logo">
         </div>
     </div>
-    
+
     <script>
         var percent = 0;
         var container = document.getElementById('intro-container');
-        
+
         var interval = setInterval(function() {{
             percent += Math.floor(Math.random() * 15) + 5;
             if (percent > 100) percent = 100;
-            
+
             if (percent >= 100) {{
                 clearInterval(interval);
                 setTimeout(function() {{
@@ -122,7 +122,7 @@ def exibir_intro():
         }}, 100);
     </script>
     """
-    
+
     intro_placeholder.markdown(intro_html, unsafe_allow_html=True)
     time.sleep(1.5)
     intro_placeholder.empty()
@@ -237,14 +237,22 @@ def load_logs_by_period(start_date: date, end_date: date):
         st.error(f"Erro ao buscar logs do Supabase: {e}")
         return []
 
-def get_existing_signatures_for_sheet(sheet_name: str) -> Counter:
-    """Busca os registros existentes da planilha e retorna a CONTAGEM de cada
-    combinação timestamp+mensagem já salva no banco (permite duplicatas reais)."""
+def get_existing_signatures_for_sheet(sheet_name: str, start_date: date, end_date: date) -> Counter:
+    """Busca APENAS os registros do período selecionado (start_date/end_date) já salvos
+    no banco para esta planilha, e retorna a CONTAGEM de cada combinação timestamp+mensagem
+    (permite duplicatas reais, mas evita reinserir o que já existe).
+
+    Antes esta função trazia o HISTÓRICO INTEIRO da planilha a cada sincronização
+    (a cada 60s, para cada planilha, em paralelo) — isso é o que estava esgotando
+    os recursos do projeto no Supabase. Agora ela é restrita ao período em análise.
+    """
     try:
         response = (
             supabase.table("atividades")
             .select("timestamp, referencia, digitador, mensagem")
             .eq("sheet_name", sheet_name)
+            .gte("date", start_date.isoformat())
+            .lte("date", end_date.isoformat())
             .execute()
         )
         if response.data:
@@ -276,12 +284,12 @@ def normalize_text(text: str) -> str:
         text_str = text_str.encode('latin1').decode('utf-8')
     except (UnicodeEncodeError, UnicodeDecodeError):
         pass
-        
+
     nfkd_form = unicodedata.normalize('NFKD', text_str)
     only_ascii = "".join([c for c in nfkd_form if not unicodedata.combining(c)])
     return only_ascii.upper()
 
-def process_single_sheet_update(sheet_name, uploaded_df):
+def process_single_sheet_update(sheet_name, uploaded_df, start_date: date, end_date: date):
     new_columns = []
     for col in uploaded_df.columns:
         col_str = str(col).strip()
@@ -315,8 +323,22 @@ def process_single_sheet_update(sheet_name, uploaded_df):
     # Garante que TODAS as colunas fiquem como string antes de qualquer .strip()
     uploaded_df = uploaded_df.fillna("-").astype(str)
 
-    # Contagem de assinaturas já existentes no banco (Counter permite múltiplas cópias idênticas)
-    existing_counts = get_existing_signatures_for_sheet(sheet_name)
+    # --- FILTRO POR PERÍODO SELECIONADO ---
+    # Antes, a aba LOG inteira (todo o histórico) era processada a cada sincronização.
+    # Agora, só as linhas cuja "DATA ATUALIZAÇÃO" cai dentro do período selecionado
+    # (start_date/end_date, padrão = dia atual) seguem para verificação/inserção.
+    datas_parseadas = pd.to_datetime(
+        uploaded_df["DATA ATUALIZAÇÃO"], dayfirst=True, errors="coerce"
+    ).dt.date
+    dentro_do_periodo = (datas_parseadas >= start_date) & (datas_parseadas <= end_date)
+    uploaded_df = uploaded_df[dentro_do_periodo]
+
+    if uploaded_df.empty:
+        return True, None
+
+    # Contagem de assinaturas já existentes no banco, restrita ao mesmo período
+    # (Counter permite múltiplas cópias idênticas)
+    existing_counts = get_existing_signatures_for_sheet(sheet_name, start_date, end_date)
     # Contagem do que já foi processado nesta própria leitura da planilha
     used_counts = Counter()
 
@@ -344,6 +366,7 @@ def process_single_sheet_update(sheet_name, uploaded_df):
             f"Ação: {observacao} — Referência: {ref}"
         )
 
+        # Chave de deduplicação: timestamp completo (com segundos, como vier da planilha) + mensagem
         sig_key = f"{data_atualizacao}_{msg_log}"
 
         # Marca esta ocorrência (a N-ésima vez que essa combinação aparece na planilha, nesta leitura)
@@ -377,8 +400,10 @@ def process_single_sheet_update(sheet_name, uploaded_df):
 # ==========================================
 # LEITURA DE PLANILHA VIA REQUISIÇÃO DIRECT CSV
 # ==========================================
-def fetch_and_process_sheet(name, sheet_id, token):
-    """Lê a aba LOG inteira da planilha via API oficial do Google Sheets v4."""
+def fetch_and_process_sheet(name, sheet_id, token, start_date: date, end_date: date):
+    """Lê a aba LOG inteira da planilha via API oficial do Google Sheets v4
+    (o Sheets API não permite filtrar linhas por data no servidor), mas só
+    processa/insere no Supabase as linhas dentro do período selecionado."""
     try:
         range_ = f"{NOME_ABA_LOG}"
         url = f"https://sheets.googleapis.com/v4/spreadsheets/{sheet_id}/values/{range_}"
@@ -406,19 +431,19 @@ def fetch_and_process_sheet(name, sheet_id, token):
 
         df_dl = pd.DataFrame(rows_fixed, columns=header)
 
-        success, msg = process_single_sheet_update(name, df_dl)
+        success, msg = process_single_sheet_update(name, df_dl, start_date, end_date)
         return success, msg
 
     except Exception as e:
         return False, f"❌ Erro inesperado ao processar '{name}': {e}"
 
-def executar_sincronizacao():
+def executar_sincronizacao(start_date: date, end_date: date):
     sucessos = 0
     token = get_google_access_token()
 
     with ThreadPoolExecutor(max_workers=5) as executor:
         futures = [
-            executor.submit(fetch_and_process_sheet, name, sheet_id, token)
+            executor.submit(fetch_and_process_sheet, name, sheet_id, token, start_date, end_date)
             for name, sheet_id in LISTA_PLANILHAS.items()
         ]
 
@@ -564,10 +589,10 @@ if not st.session_state.authenticated:
         with st.container(border=True):
             st.title("🔐 Acesso ao Sistema")
             st.caption("Digite a senha para prosseguir")
-            
+
             pass_required = st.secrets.get("system_password", "multproc")
             password_input = st.text_input("Senha de Acesso", type="password")
-            
+
             if st.button("Entrar", use_container_width=True):
                 if password_input == pass_required:
                     st.session_state.authenticated = True
@@ -577,10 +602,23 @@ if not st.session_state.authenticated:
     st.stop()
 
 # ==========================================
+# SELEÇÃO DE PERÍODO (ANTES DA SINCRONIZAÇÃO)
+# ==========================================
+# As datas precisam existir ANTES de sincronizar, para que a sincronização
+# processe apenas o período selecionado (padrão: dia atual ao entrar no site),
+# em vez de puxar o histórico inteiro das planilhas a cada ciclo.
+hoje_br = get_now_br().date()
+
+if "dt_inicio" not in st.session_state:
+    st.session_state["dt_inicio"] = hoje_br
+if "dt_fim" not in st.session_state:
+    st.session_state["dt_fim"] = hoje_br
+
+# ==========================================
 # EXECUÇÃO AUTOMÁTICA DE SINCRONIZAÇÃO A CADA LOOP
 # ==========================================
-with st.spinner("Sincronizando histórico completo das planilhas..."):
-    qtd_sucesso = executar_sincronizacao()
+with st.spinner("Sincronizando histórico do período selecionado..."):
+    qtd_sucesso = executar_sincronizacao(st.session_state["dt_inicio"], st.session_state["dt_fim"])
 
 # ==========================================
 # PAINEL PRINCIPAL
@@ -598,22 +636,20 @@ st.caption(f"Monitorando **{len(LISTA_PLANILHAS)}** planilha(s) configurada(s) �
 st.divider()
 
 # --- SELEÇÃO DE DATAS E BUSCA NO SUPABASE ---
-hoje_br = get_now_br().date()
-
 st.subheader("📅 Seleção de Período de Análise")
 col_search, col_dt1, col_dt2 = st.columns([2, 1, 1])
 
 with col_dt1:
     dt_inicio = st.date_input(
         "Data Inicial",
-        value=hoje_br,
+        key="dt_inicio",
         format="DD/MM/YYYY"
     )
 
 with col_dt2:
     dt_fim = st.date_input(
         "Data Final",
-        value=hoje_br,
+        key="dt_fim",
         format="DD/MM/YYYY"
     )
 
@@ -634,7 +670,7 @@ else:
 if not df_logs_periodo.empty and "date" in df_logs_periodo.columns:
     df_logs_periodo["parsed_date"] = pd.to_datetime(df_logs_periodo["date"], errors="coerce").dt.date
     df_logs_periodo = df_logs_periodo[
-        (df_logs_periodo["parsed_date"] >= dt_inicio) & 
+        (df_logs_periodo["parsed_date"] >= dt_inicio) &
         (df_logs_periodo["parsed_date"] <= dt_fim)
     ]
 
@@ -655,17 +691,17 @@ if not df_logs_periodo.empty:
         if candidatos in df_logs_periodo.columns:
             col_data = candidatos
             break
-            
+
     col_digitador = "digitador" if "digitador" in df_logs_periodo.columns else None
 
     if col_data and col_digitador:
         df_sorted = df_logs_periodo.sort_values(by=[col_digitador, col_data]).copy()
-        
+
         df_sorted["dt_parsed"] = pd.to_datetime(df_sorted[col_data], dayfirst=True, errors="coerce")
         df_sorted["diff_tempo"] = df_sorted.groupby(col_digitador)["dt_parsed"].diff()
-        
+
         df_sorted["nova_acao"] = df_sorted["diff_tempo"].isna() | (df_sorted["diff_tempo"].dt.total_seconds() > 120)
-        
+
         total_acoes_agrupadas = int(df_sorted["nova_acao"].sum())
         df_acoes_filtradas = df_sorted[df_sorted["nova_acao"]]
     else:
@@ -679,16 +715,16 @@ st.subheader(f"📈 Estatísticas no Período ({dt_inicio.strftime('%d/%m/%Y')} 
 
 if not df_logs_periodo.empty:
     col_m1, col_m2, col_m3 = st.columns(3)
-    
+
     col_m1.metric("Ações Registradas no Período", total_acoes_agrupadas)
     col_m2.metric("Digitadores Ativos", df_logs_periodo["digitador"].nunique())
     col_m3.metric("Planilhas com Atividade", df_logs_periodo["sheet_name"].nunique())
 
     planilhas_com_movimentacao = sorted([p for p in df_logs_periodo["sheet_name"].unique() if p and str(p) not in ["None", "nan", "-"]])
-    
+
     planilhas_com_log = ["🌐 Consolidado (Todas)"] + planilhas_com_movimentacao
     tabs = st.tabs(planilhas_com_log)
-    
+
     # --- ABA CONSOLIDADO ---
     with tabs[0]:
         c1, c2 = st.columns(2)
@@ -703,7 +739,7 @@ if not df_logs_periodo.empty:
     for idx, sheet_key in enumerate(planilhas_com_movimentacao, start=1):
         with tabs[idx]:
             df_sheet_logs = df_acoes_filtradas[df_acoes_filtradas["sheet_name"] == sheet_key]
-            
+
             c_s1, c_s2 = st.columns(2)
             with c_s1:
                 st.markdown("**Atividades por Digitador**")
