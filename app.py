@@ -714,39 +714,59 @@ else:
 st.subheader(f"📈 Estatísticas no Período ({dt_inicio.strftime('%d/%m/%Y')} a {dt_fim.strftime('%d/%m/%Y')})")
 
 if not df_logs_periodo.empty:
-    col_m1, col_m2, col_m3 = st.columns(3)
+    col_m1, col_m2, col_m3, col_m4 = st.columns(4)
 
     col_m1.metric("Ações Registradas no Período", total_acoes_agrupadas)
     col_m2.metric("Digitadores Ativos", df_logs_periodo["digitador"].nunique())
     col_m3.metric("Planilhas com Atividade", df_logs_periodo["sheet_name"].nunique())
+
+    total_registrados = int(
+        df_logs_periodo["mensagem"].str.contains("REGISTRADO", case=False, na=False).sum()
+    )
+    col_m4.metric("Registrados", total_registrados)
 
     planilhas_com_movimentacao = sorted([p for p in df_logs_periodo["sheet_name"].unique() if p and str(p) not in ["None", "nan", "-"]])
 
     planilhas_com_log = ["🌐 Consolidado (Todas)"] + planilhas_com_movimentacao
     tabs = st.tabs(planilhas_com_log)
 
+    # --- FILTRO DE "REGISTRADOS" (mensagens que contêm a palavra REGISTRADO) ---
+    if "mensagem" in df_acoes_filtradas.columns:
+        df_registrados_filtradas = df_acoes_filtradas[
+            df_acoes_filtradas["mensagem"].str.contains("REGISTRADO", case=False, na=False)
+        ]
+    else:
+        df_registrados_filtradas = pd.DataFrame(columns=df_acoes_filtradas.columns)
+
     # --- ABA CONSOLIDADO ---
     with tabs[0]:
-        c1, c2 = st.columns(2)
+        c1, c2, c3 = st.columns(3)
         with c1:
             st.markdown("**Atividades por Digitador (Geral)**")
             st.bar_chart(df_acoes_filtradas["digitador"].value_counts())
         with c2:
             st.markdown("**Atividades por Planilha**")
             st.bar_chart(df_acoes_filtradas["sheet_name"].value_counts())
+        with c3:
+            st.markdown(f"**Registrados por Digitador ({len(df_registrados_filtradas)})**")
+            st.bar_chart(df_registrados_filtradas["digitador"].value_counts())
 
     # --- ABAS INDIVIDUAIS ---
     for idx, sheet_key in enumerate(planilhas_com_movimentacao, start=1):
         with tabs[idx]:
             df_sheet_logs = df_acoes_filtradas[df_acoes_filtradas["sheet_name"] == sheet_key]
-
-            c_s1, c_s2 = st.columns(2)
+            df_sheet_registrados = df_registrados_filtradas[df_registrados_filtradas["sheet_name"] == sheet_key]
+    
+            c_s1, c_s2, c_s3 = st.columns(3)
             with c_s1:
                 st.markdown("**Atividades por Digitador**")
                 st.bar_chart(df_sheet_logs["digitador"].value_counts())
             with c_s2:
                 st.markdown("**Ações mais Frequentes**")
                 st.bar_chart(df_sheet_logs["referencia"].value_counts().head(10))
+            with c_s3:
+                st.markdown(f"**Registrados por Digitador ({len(df_sheet_registrados)})**")
+                st.bar_chart(df_sheet_registrados["digitador"].value_counts())
 else:
     st.info("Nenhuma atividade registrada no período selecionado.")
 
