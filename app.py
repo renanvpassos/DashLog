@@ -2,6 +2,8 @@ import os
 import re
 import io
 import time
+import base64
+import threading
 import requests
 import unicodedata
 from collections import Counter
@@ -13,7 +15,6 @@ import streamlit as st
 from fpdf import FPDF
 from supabase import create_client, Client
 from streamlit_autorefresh import st_autorefresh
-import base64
 
 from google.oauth2.service_account import Credentials
 import google.auth.transport.requests
@@ -40,6 +41,12 @@ st.markdown(
     """,
     unsafe_allow_html=True
 )
+
+# Intervalo do autorefresh (ms) e validade do cache de sincronização (s).
+# O TTL é MENOR que o intervalo para garantir que cada refresh dispare uma nova sincronização.
+AUTOREFRESH_MS = 60_000
+SYNC_TTL_SECONDS = 55
+
 
 def get_logo_base64():
     try:
@@ -141,7 +148,7 @@ def get_now_br() -> datetime:
     """Retorna o datetime atual no fuso de Brasília."""
     return datetime.now(TZ_BR)
 
-st_autorefresh(interval=60000, key="auto_sync_timer")
+st_autorefresh(interval=AUTOREFRESH_MS, key="auto_sync_timer")
 
 # ==========================================
 # CONEXÃO COM O SUPABASE
@@ -191,7 +198,8 @@ def get_google_credentials() -> Credentials:
         st.stop()
 
 def get_google_access_token() -> str:
-    """Retorna um Access Token válido, renovando automaticamente se estiver expirado."""
+    """Retorna um Access Token válido, renovando automaticamente se estiver expirado.
+    DEVE ser chamada na thread principal do Streamlit (usa st.*)."""
     try:
         credentials = get_google_credentials()
         if not credentials.valid or credentials.expired:
@@ -220,60 +228,77 @@ DATA_DIR = "data"
 os.makedirs(DATA_DIR, exist_ok=True)
 
 # ==========================================
+# ESTADO COMPARTILHADO DE SINCRONIZAÇÃO (entre todas as sessões)
+# ==========================================
+@st.cache_resource
+def get_sync_state() -> dict:
+    """Objeto único por processo do servidor. Guarda quando cada período foi
+    sincronizado pela última vez, quais estão em andamento, erros e uma 'versão'
+    que muda a cada sincronização concluída (usada para invalidar o cache de leitura)."""
+    return {
+        "lock": threading.Lock(),
+        "last_sync": {},   # {(start, end): timestamp}
+        "running": set(),  # {(start, end)}
+        "errors": {},      # {(start, end): [mensagens]}
+        "version": 0,
+    }
+
+# ==========================================
 # GERENCIAMENTO DE LOGS VIA SUPABASE
 # ==========================================
-def load_logs_by_period(start_date: date, end_date: date):
+def _paginate(build_query, page_size: int = 1000) -> list:
+    """O Supabase/PostgREST devolve no máximo 1000 linhas por requisição.
+    Esta função percorre todas as páginas para não perder registros."""
+    rows, offset = [], 0
+    while True:
+        resp = build_query().range(offset, offset + page_size - 1).execute()
+        data = resp.data or []
+        rows.extend(data)
+        if len(data) < page_size:
+            break
+        offset += page_size
+    return rows
+
+@st.cache_data(show_spinner=False, max_entries=20)
+def load_logs_by_period(start_date: date, end_date: date, version: int):
+    """Lê os logs do período. O parâmetro `version` faz parte da chave de cache:
+    quando uma sincronização termina, a versão muda e o cache é invalidado na hora.
+    Sem sincronização nova, todas as sessões/reruns reaproveitam o mesmo resultado
+    (zero consultas extras ao Supabase)."""
     try:
-        response = (
-            supabase.table("atividades")
+        return _paginate(
+            lambda: supabase.table("atividades")
             .select("*")
             .gte("date", start_date.isoformat())
             .lte("date", end_date.isoformat())
             .order("id", desc=True)
-            .execute()
         )
-        return response.data if response.data else []
     except Exception as e:
-        st.error(f"Erro ao buscar logs do Supabase: {e}")
-        return []
+        raise RuntimeError(f"Erro ao buscar logs do Supabase: {e}")
 
 def get_existing_signatures_for_sheet(sheet_name: str, start_date: date, end_date: date) -> Counter:
-    """Busca APENAS os registros do período selecionado (start_date/end_date) já salvos
-    no banco para esta planilha, e retorna a CONTAGEM de cada combinação timestamp+mensagem
-    (permite duplicatas reais, mas evita reinserir o que já existe).
+    data = _paginate(
+        lambda: supabase.table("atividades")
+        .select("id, timestamp, mensagem")
+        .eq("sheet_name", sheet_name)
+        .gte("date", start_date.isoformat())
+        .lte("date", end_date.isoformat())
+        .order("id")
+    )
+    return Counter(f"{row.get('timestamp', '')}_{row.get('mensagem', '')}" for row in data)
 
-    Antes esta função trazia o HISTÓRICO INTEIRO da planilha a cada sincronização
-    (a cada 60s, para cada planilha, em paralelo) — isso é o que estava esgotando
-    os recursos do projeto no Supabase. Agora ela é restrita ao período em análise.
-    """
-    try:
-        response = (
-            supabase.table("atividades")
-            .select("timestamp, referencia, digitador, mensagem")
-            .eq("sheet_name", sheet_name)
-            .gte("date", start_date.isoformat())
-            .lte("date", end_date.isoformat())
-            .execute()
-        )
-        if response.data:
-            return Counter(
-                f"{row.get('timestamp', '')}_{row.get('mensagem', '')}"
-                for row in response.data
-            )
-        return Counter()
-    except Exception:
-        return Counter()
-
-def add_log_entries_bulk(logs_list):
+def add_log_entries_bulk(logs_list) -> list:
+    erros = []
     if not logs_list:
-        return
+        return erros
     chunk_size = 500
     for i in range(0, len(logs_list), chunk_size):
         chunk = logs_list[i : i + chunk_size]
         try:
             supabase.table("atividades").insert(chunk).execute()
         except Exception as e:
-            st.error(f"Erro ao salvar lote de registros no Supabase: {e}")
+            erros.append(f"Erro ao salvar lote de registros no Supabase: {e}")
+    return erros
 
 # ==========================================
 # TRATAMENTO DE TEXTO E PROCESSAMENTO
@@ -320,13 +345,8 @@ def process_single_sheet_update(sheet_name, uploaded_df, start_date: date, end_d
         )
         return False, erro
 
-    # Garante que TODAS as colunas fiquem como string antes de qualquer .strip()
     uploaded_df = uploaded_df.fillna("-").astype(str)
 
-    # --- FILTRO POR PERÍODO SELECIONADO ---
-    # Antes, a aba LOG inteira (todo o histórico) era processada a cada sincronização.
-    # Agora, só as linhas cuja "DATA ATUALIZAÇÃO" cai dentro do período selecionado
-    # (start_date/end_date, padrão = dia atual) seguem para verificação/inserção.
     datas_parseadas = pd.to_datetime(
         uploaded_df["DATA ATUALIZAÇÃO"], dayfirst=True, errors="coerce"
     ).dt.date
@@ -336,10 +356,7 @@ def process_single_sheet_update(sheet_name, uploaded_df, start_date: date, end_d
     if uploaded_df.empty:
         return True, None
 
-    # Contagem de assinaturas já existentes no banco, restrita ao mesmo período
-    # (Counter permite múltiplas cópias idênticas)
     existing_counts = get_existing_signatures_for_sheet(sheet_name, start_date, end_date)
-    # Contagem do que já foi processado nesta própria leitura da planilha
     used_counts = Counter()
 
     new_logs = []
@@ -366,13 +383,9 @@ def process_single_sheet_update(sheet_name, uploaded_df, start_date: date, end_d
             f"Ação: {observacao} — Referência: {ref}"
         )
 
-        # Chave de deduplicação: timestamp completo (com segundos, como vier da planilha) + mensagem
         sig_key = f"{data_atualizacao}_{msg_log}"
-
-        # Marca esta ocorrência (a N-ésima vez que essa combinação aparece na planilha, nesta leitura)
         used_counts[sig_key] += 1
 
-        # Só insere se ainda não temos no banco tantas cópias quanto já vimos até agora na planilha.
         if used_counts[sig_key] > existing_counts.get(sig_key, 0):
             try:
                 dt_obj = pd.to_datetime(data_atualizacao, dayfirst=True, errors="coerce")
@@ -393,17 +406,16 @@ def process_single_sheet_update(sheet_name, uploaded_df, start_date: date, end_d
             })
 
     if new_logs:
-        add_log_entries_bulk(new_logs)
+        erros_insert = add_log_entries_bulk(new_logs)
+        if erros_insert:
+            return False, f"❌ **'{sheet_name}'**: " + " | ".join(erros_insert)
 
     return True, None
 
 # ==========================================
-# LEITURA DE PLANILHA VIA REQUISIÇÃO DIRECT CSV
+# LEITURA DE PLANILHA VIA GOOGLE SHEETS API
 # ==========================================
 def fetch_and_process_sheet(name, sheet_id, token, start_date: date, end_date: date):
-    """Lê a aba LOG inteira da planilha via API oficial do Google Sheets v4
-    (o Sheets API não permite filtrar linhas por data no servidor), mas só
-    processa/insere no Supabase as linhas dentro do período selecionado."""
     try:
         range_ = f"{NOME_ABA_LOG}"
         url = f"https://sheets.googleapis.com/v4/spreadsheets/{sheet_id}/values/{range_}"
@@ -431,15 +443,14 @@ def fetch_and_process_sheet(name, sheet_id, token, start_date: date, end_date: d
 
         df_dl = pd.DataFrame(rows_fixed, columns=header)
 
-        success, msg = process_single_sheet_update(name, df_dl, start_date, end_date)
-        return success, msg
+        return process_single_sheet_update(name, df_dl, start_date, end_date)
 
     except Exception as e:
         return False, f"❌ Erro inesperado ao processar '{name}': {e}"
 
-def executar_sincronizacao(start_date: date, end_date: date):
+def executar_sincronizacao(start_date: date, end_date: date, token: str):
     sucessos = 0
-    token = get_google_access_token()
+    erros = []
 
     with ThreadPoolExecutor(max_workers=5) as executor:
         futures = [
@@ -448,13 +459,67 @@ def executar_sincronizacao(start_date: date, end_date: date):
         ]
 
         for future in as_completed(futures):
-            success, err_msg = future.result()
+            try:
+                success, err_msg = future.result()
+            except Exception as e:
+                success, err_msg = False, f"❌ Erro inesperado: {e}"
             if success:
                 sucessos += 1
             elif err_msg:
-                st.error(err_msg)
+                erros.append(err_msg)
 
-    return sucessos
+    return sucessos, erros
+
+# ==========================================
+# ORQUESTRAÇÃO DA SINCRONIZAÇÃO COM CACHE
+# ==========================================
+def _run_sync_job(key, token, state):
+    start_date, end_date = key
+    try:
+        _, erros = executar_sincronizacao(start_date, end_date, token)
+    except Exception as e:
+        erros = [f"❌ Falha na sincronização: {e}"]
+
+    with state["lock"]:
+        state["last_sync"][key] = time.time()
+        state["errors"][key] = erros
+        state["running"].discard(key)
+        state["version"] += 1
+
+        if len(state["last_sync"]) > 50:
+            mais_antigos = sorted(state["last_sync"], key=state["last_sync"].get)[:-50]
+            for k in mais_antigos:
+                state["last_sync"].pop(k, None)
+                state["errors"].pop(k, None)
+
+def garantir_sincronizacao(start_date: date, end_date: date):
+    state = get_sync_state()
+    key = (start_date, end_date)
+
+    with state["lock"]:
+        last = state["last_sync"].get(key)
+        esta_vencido = last is None or (time.time() - last) >= SYNC_TTL_SECONDS
+        ja_rodando = key in state["running"]
+        deve_iniciar = esta_vencido and not ja_rodando
+        primeira_vez = last is None
+        if deve_iniciar:
+            state["running"].add(key)
+
+    if not deve_iniciar:
+        return
+
+    try:
+        token = get_google_access_token()
+    except BaseException:
+        with state["lock"]:
+            state["running"].discard(key)
+        raise
+
+    if primeira_vez:
+        with st.spinner("Sincronizando histórico do período selecionado..."):
+            _run_sync_job(key, token, state)
+    else:
+        threading.Thread(target=_run_sync_job, args=(key, token, state), daemon=True).start()
 
 # ==========================================
 # RELATÓRIO PDF
@@ -575,6 +640,31 @@ def generate_pdf(logs_filtered, start_date, end_date) -> bytes:
     output = pdf.output()
     return bytes(output)
 
+def obter_data_log(entry):
+    timestamp_str = entry.get("timestamp", "")
+    try:
+        dt_conv = pd.to_datetime(timestamp_str, dayfirst=True, errors="coerce")
+        if pd.notna(dt_conv):
+            return dt_conv.to_pydatetime()
+    except Exception:
+        pass
+
+    msg = entry.get("mensagem", "")
+    match = re.search(r"^(\d{2}/\d{2}/\d{4}\s\d{2}:\d{2}:\d{2})", msg)
+    if match:
+        try:
+            return datetime.strptime(match.group(1), "%d/%m/%Y %H:%M:%S")
+        except Exception:
+            pass
+
+    return datetime.min
+
+@st.cache_data(show_spinner=False, max_entries=5)
+def gerar_pdf_cache(start_date: date, end_date: date, version: int) -> bytes:
+    logs = load_logs_by_period(start_date, end_date, version)
+    logs_ordenados_pdf = sorted(logs, key=obter_data_log, reverse=True)
+    return generate_pdf(logs_ordenados_pdf, start_date, end_date)
+
 # ==========================================
 # TELA DE AUTENTICAÇÃO
 # ==========================================
@@ -604,9 +694,6 @@ if not st.session_state.authenticated:
 # ==========================================
 # SELEÇÃO DE PERÍODO (ANTES DA SINCRONIZAÇÃO)
 # ==========================================
-# As datas precisam existir ANTES de sincronizar, para que a sincronização
-# processe apenas o período selecionado (padrão: dia atual ao entrar no site),
-# em vez de puxar o histórico inteiro das planilhas a cada ciclo.
 hoje_br = get_now_br().date()
 
 if "dt_inicio" not in st.session_state:
@@ -614,11 +701,14 @@ if "dt_inicio" not in st.session_state:
 if "dt_fim" not in st.session_state:
     st.session_state["dt_fim"] = hoje_br
 
+if st.session_state["dt_inicio"] > st.session_state["dt_fim"]:
+    st.warning("⚠️ A Data Inicial é maior que a Data Final. Ajuste o período.")
+
 # ==========================================
-# EXECUÇÃO AUTOMÁTICA DE SINCRONIZAÇÃO A CADA LOOP
+# SINCRONIZAÇÃO
 # ==========================================
-with st.spinner("Sincronizando histórico do período selecionado..."):
-    qtd_sucesso = executar_sincronizacao(st.session_state["dt_inicio"], st.session_state["dt_fim"])
+if st.session_state["dt_inicio"] <= st.session_state["dt_fim"]:
+    garantir_sincronizacao(st.session_state["dt_inicio"], st.session_state["dt_fim"])
 
 # ==========================================
 # PAINEL PRINCIPAL
@@ -629,7 +719,10 @@ with col_titulo:
     st.title("📊 Monitor Operacional em Tempo Real")
 
 with col_logo:
-    st.image("logoMult.png", use_container_width=True)
+    try:
+        st.image("logoMult.png", use_container_width=True)
+    except Exception:
+        pass
 
 st.caption(f"Monitorando **{len(LISTA_PLANILHAS)}** planilha(s) configurada(s) — dados lidos da aba **'{NOME_ABA_LOG}'**. *(Atenção: Atualiza automaticamente a cada 1 minuto!)*")
 
@@ -659,8 +752,33 @@ with col_search:
         placeholder="Nome do digitador, importador ou referência..."
     )
 
-# --- CARREGA LOGS DO BANCO E APLICA FILTRAGEM COMPLETA ---
-logs_periodo_brutos = load_logs_by_period(dt_inicio, dt_fim)
+# --- STATUS DA SINCRONIZAÇÃO ---
+_state = get_sync_state()
+_key = (dt_inicio, dt_fim)
+with _state["lock"]:
+    _ultima = _state["last_sync"].get(_key)
+    _erros_sync = list(_state["errors"].get(_key, []))
+    _em_andamento = _key in _state["running"]
+    _versao = _state["version"]
+
+for _msg in _erros_sync:
+    st.error(_msg)
+
+if _ultima:
+    _hora = datetime.fromtimestamp(_ultima, TZ_BR).strftime("%H:%M:%S")
+    st.caption(f"🔄 Última sincronização: **{_hora}**" + (" — sincronizando agora..." if _em_andamento else ""))
+elif _em_andamento:
+    st.caption("🔄 Sincronizando pela primeira vez...")
+
+# --- CARREGA LOGS DO BANCO ---
+if dt_inicio > dt_fim:
+    st.stop()
+
+try:
+    logs_periodo_brutos = load_logs_by_period(dt_inicio, dt_fim, _versao)
+except Exception as e:
+    st.error(str(e))
+    logs_periodo_brutos = []
 
 if logs_periodo_brutos:
     df_logs_periodo = pd.DataFrame(logs_periodo_brutos)
@@ -695,9 +813,9 @@ if not df_logs_periodo.empty:
     col_digitador = "digitador" if "digitador" in df_logs_periodo.columns else None
 
     if col_data and col_digitador:
-        df_sorted = df_logs_periodo.sort_values(by=[col_digitador, col_data]).copy()
-
+        df_sorted = df_logs_periodo.copy()
         df_sorted["dt_parsed"] = pd.to_datetime(df_sorted[col_data], dayfirst=True, errors="coerce")
+        df_sorted = df_sorted.sort_values(by=[col_digitador, "dt_parsed"])
         df_sorted["diff_tempo"] = df_sorted.groupby(col_digitador)["dt_parsed"].diff()
 
         df_sorted["nova_acao"] = df_sorted["diff_tempo"].isna() | (df_sorted["diff_tempo"].dt.total_seconds() > 120)
@@ -710,8 +828,13 @@ if not df_logs_periodo.empty:
 else:
     df_acoes_filtradas = pd.DataFrame(columns=["sheet_name", "digitador", "referencia"])
 
-# --- ESTATÍSTICAS BASEADAS NO PERÍODO SELECIONADO ---
+# ==========================================
+# ESTATÍSTICAS E SELETOR UNIFICADO DE VISÃO
+# ==========================================
 st.subheader(f"📈 Estatísticas no Período ({dt_inicio.strftime('%d/%m/%Y')} a {dt_fim.strftime('%d/%m/%Y')})")
+
+# Variável padrão da aba/visão selecionada
+aba_selecionada = "🌐 Consolidado (Todas)"
 
 if not df_logs_periodo.empty:
     col_m1, col_m2, col_m3, col_m4 = st.columns(4)
@@ -726,11 +849,17 @@ if not df_logs_periodo.empty:
     col_m4.metric("Registrados", total_registrados)
 
     planilhas_com_movimentacao = sorted([p for p in df_logs_periodo["sheet_name"].unique() if p and str(p) not in ["None", "nan", "-"]])
-
     planilhas_com_log = ["🌐 Consolidado (Todas)"] + planilhas_com_movimentacao
-    tabs = st.tabs(planilhas_com_log)
 
-    # --- FILTRO DE "REGISTRADOS" (mensagens que contêm a palavra REGISTRADO) ---
+    # Seletor unificado simulando as abas e controlando simultaneamente estatísticas e histórico
+    aba_selecionada = st.radio(
+        "Selecione a Visão / Planilha para Estatísticas:",
+        options=planilhas_com_log,
+        horizontal=True,
+        key="aba_estatisticas_ativa"
+    )
+
+    # --- FILTRO DE "REGISTRADOS" ---
     if "mensagem" in df_acoes_filtradas.columns:
         df_registrados_filtradas = df_acoes_filtradas[
             df_acoes_filtradas["mensagem"].str.contains("REGISTRADO", case=False, na=False)
@@ -738,8 +867,8 @@ if not df_logs_periodo.empty:
     else:
         df_registrados_filtradas = pd.DataFrame(columns=df_acoes_filtradas.columns)
 
-    # --- ABA CONSOLIDADO ---
-    with tabs[0]:
+    # Renderiza os gráficos de acordo com a seleção unificada
+    if aba_selecionada == "🌐 Consolidado (Todas)":
         c1, c2, c3 = st.columns(3)
         with c1:
             st.markdown("**Atividades por Digitador (Geral)**")
@@ -750,68 +879,51 @@ if not df_logs_periodo.empty:
         with c3:
             st.markdown(f"**Registrados por Digitador ({len(df_registrados_filtradas)})**")
             st.bar_chart(df_registrados_filtradas["digitador"].value_counts())
+    else:
+        df_sheet_logs = df_acoes_filtradas[df_acoes_filtradas["sheet_name"] == aba_selecionada]
+        df_sheet_registrados = df_registrados_filtradas[df_registrados_filtradas["sheet_name"] == aba_selecionada]
 
-    # --- ABAS INDIVIDUAIS ---
-    for idx, sheet_key in enumerate(planilhas_com_movimentacao, start=1):
-        with tabs[idx]:
-            df_sheet_logs = df_acoes_filtradas[df_acoes_filtradas["sheet_name"] == sheet_key]
-            df_sheet_registrados = df_registrados_filtradas[df_registrados_filtradas["sheet_name"] == sheet_key]
-    
-            c_s1, c_s2, c_s3 = st.columns(3)
-            with c_s1:
-                st.markdown("**Atividades por Digitador**")
-                st.bar_chart(df_sheet_logs["digitador"].value_counts())
-            with c_s2:
-                st.markdown("**Ações mais Frequentes**")
-                st.bar_chart(df_sheet_logs["referencia"].value_counts().head(10))
-            with c_s3:
-                st.markdown(f"**Registrados por Digitador ({len(df_sheet_registrados)})**")
-                st.bar_chart(df_sheet_registrados["digitador"].value_counts())
+        c_s1, c_s2, c_s3 = st.columns(3)
+        with c_s1:
+            st.markdown("**Atividades por Digitador**")
+            st.bar_chart(df_sheet_logs["digitador"].value_counts())
+        with c_s2:
+            st.markdown("**Ações mais Frequentes**")
+            st.bar_chart(df_sheet_logs["referencia"].value_counts().head(10))
+        with c_s3:
+            st.markdown(f"**Registrados por Digitador ({len(df_sheet_registrados)})**")
+            st.bar_chart(df_sheet_registrados["digitador"].value_counts())
 else:
     st.info("Nenhuma atividade registrada no período selecionado.")
 
-# --- LOG ATIVIDADES ---
+st.divider()
+
+# ==========================================
+# HISTÓRICO DE EVENTOS (SINCRONIZADO)
+# ==========================================
 st.markdown("**Histórico de Eventos:**")
 log_container = st.container(height=380, border=True)
 
 filtered_logs = []
 if logs_periodo:
-    if search_query.strip():
-        term = search_query.strip().lower()
-        for log in logs_periodo:
+    for log in logs_periodo:
+        # Aplicação automática do filtro da aba selecionada nas estatísticas
+        if aba_selecionada != "🌐 Consolidado (Todas)":
+            if str(log.get("sheet_name", "")) != aba_selecionada:
+                continue
+
+        # Filtro por termo de pesquisa digitado
+        if search_query.strip():
+            term = search_query.strip().lower()
             msg = str(log.get("mensagem", "")).lower()
             digitador = str(log.get("digitador", "")).lower()
             referencia = str(log.get("referencia", "")).lower()
             sheet = str(log.get("sheet_name", "")).lower()
 
-            if (
-                term in msg
-                or term in digitador
-                or term in referencia
-                or term in sheet
-            ):
-                filtered_logs.append(log)
-    else:
-        filtered_logs = logs_periodo.copy()
+            if not (term in msg or term in digitador or term in referencia or term in sheet):
+                continue
 
-def obter_data_log(entry):
-    timestamp_str = entry.get("timestamp", "")
-    try:
-        dt_conv = pd.to_datetime(timestamp_str, dayfirst=True, errors="coerce")
-        if pd.notna(dt_conv):
-            return dt_conv.to_pydatetime()
-    except Exception:
-        pass
-
-    msg = entry.get("mensagem", "")
-    match = re.search(r"^(\d{2}/\d{2}/\d{4}\s\d{2}:\d{2}:\d{2})", msg)
-    if match:
-        try:
-            return datetime.strptime(match.group(1), "%d/%m/%Y %H:%M:%S")
-        except Exception:
-            pass
-
-    return datetime.min
+        filtered_logs.append(log)
 
 logs_ordenados = (
     sorted(filtered_logs, key=obter_data_log, reverse=True)
@@ -853,8 +965,7 @@ with log_container:
 st.write("")
 
 if logs_periodo:
-    logs_para_pdf = sorted(logs_periodo, key=obter_data_log, reverse=True)
-    pdf_bytes = generate_pdf(logs_para_pdf, dt_inicio, dt_fim)
+    pdf_bytes = gerar_pdf_cache(dt_inicio, dt_fim, _versao)
 
     st.download_button(
         label="📄 Extrair Log em PDF",
