@@ -843,8 +843,9 @@ if not df_logs_periodo.empty:
     col_m2.metric("Digitadores Ativos", df_logs_periodo["digitador"].nunique())
     col_m3.metric("Planilhas com Atividade", df_logs_periodo["sheet_name"].nunique())
 
+    # Contabiliza tanto "REGISTRADO" quanto "DOCS OK"
     total_registrados = int(
-        df_logs_periodo["mensagem"].str.contains("REGISTRADO", case=False, na=False).sum()
+        df_logs_periodo["mensagem"].str.contains("REGISTRADO|DOCS OK", case=False, na=False).sum()
     )
     col_m4.metric("Registrados", total_registrados)
 
@@ -859,10 +860,10 @@ if not df_logs_periodo.empty:
         key="aba_estatisticas_ativa"
     )
 
-    # --- FILTRO DE "REGISTRADOS" ---
+    # --- FILTRO DE "REGISTRADOS" (Incluindo "DOCS OK") ---
     if "mensagem" in df_acoes_filtradas.columns:
         df_registrados_filtradas = df_acoes_filtradas[
-            df_acoes_filtradas["mensagem"].str.contains("REGISTRADO", case=False, na=False)
+            df_acoes_filtradas["mensagem"].str.contains("REGISTRADO|DOCS OK", case=False, na=False)
         ]
     else:
         df_registrados_filtradas = pd.DataFrame(columns=df_acoes_filtradas.columns)
