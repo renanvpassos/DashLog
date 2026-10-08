@@ -837,22 +837,16 @@ st.subheader(f"📈 Estatísticas no Período ({dt_inicio.strftime('%d/%m/%Y')} 
 aba_selecionada = "🌐 Consolidado (Todas)"
 
 if not df_logs_periodo.empty:
-    col_m1, col_m2, col_m3, col_m4 = st.columns(4)
-
-    col_m1.metric("Ações Registradas no Período", total_acoes_agrupadas)
-    col_m2.metric("Digitadores Ativos", df_logs_periodo["digitador"].nunique())
-    col_m3.metric("Planilhas com Atividade", df_logs_periodo["sheet_name"].nunique())
-
-    # Contabiliza tanto "REGISTRADO" quanto "DOCS OK"
-    total_registrados = int(
-        df_logs_periodo["mensagem"].str.contains("REGISTRADO|DOCS OK", case=False, na=False).sum()
+    planilhas_com_movimentacao = sorted(
+        [p for p in df_logs_periodo["sheet_name"].unique() if p and str(p) not in ["None", "nan", "-"]]
     )
-    col_m4.metric("Registrados", total_registrados)
-
-    planilhas_com_movimentacao = sorted([p for p in df_logs_periodo["sheet_name"].unique() if p and str(p) not in ["None", "nan", "-"]])
     planilhas_com_log = ["🌐 Consolidado (Todas)"] + planilhas_com_movimentacao
 
-    # Seletor unificado simulando as abas e controlando simultaneamente estatísticas e histórico
+    # Se a planilha selecionada deixou de existir no período, volta para o consolidado
+    if st.session_state.get("aba_estatisticas_ativa") not in planilhas_com_log:
+        st.session_state["aba_estatisticas_ativa"] = "🌐 Consolidado (Todas)"
+
+    # O seletor vem ANTES das métricas para que elas respondam à seleção
     aba_selecionada = st.radio(
         "Selecione a Visão / Planilha para Estatísticas:",
         options=planilhas_com_log,
@@ -860,40 +854,63 @@ if not df_logs_periodo.empty:
         key="aba_estatisticas_ativa"
     )
 
-    # --- FILTRO DE "REGISTRADOS" (Incluindo "DOCS OK") ---
-    if "mensagem" in df_acoes_filtradas.columns:
-        df_registrados_filtradas = df_acoes_filtradas[
-            df_acoes_filtradas["mensagem"].str.contains("REGISTRADO|DOCS OK", case=False, na=False)
+    # --- Aplica o filtro da planilha selecionada em todos os DataFrames ---
+    if aba_selecionada == "🌐 Consolidado (Todas)":
+        df_view_logs = df_logs_periodo            # todos os registros (para contagens)
+        df_view_acoes = df_acoes_filtradas        # ações agrupadas (para gráficos/total)
+    else:
+        df_view_logs = df_logs_periodo[df_logs_periodo["sheet_name"] == aba_selecionada]
+        df_view_acoes = df_acoes_filtradas[df_acoes_filtradas["sheet_name"] == aba_selecionada]
+
+    # Ações agrupadas (regra dos 120s) recalculadas para a visão atual
+    total_acoes_view = (
+        int(df_view_acoes.shape[0])
+        if "nova_acao" in df_acoes_filtradas.columns
+        else len(df_view_logs)
+    )
+
+    # Registrados (inclui "DOCS OK") na visão atual
+    if "mensagem" in df_view_acoes.columns:
+        df_registrados_view = df_view_acoes[
+            df_view_acoes["mensagem"].str.contains("REGISTRADO|DOCS OK", case=False, na=False)
         ]
     else:
-        df_registrados_filtradas = pd.DataFrame(columns=df_acoes_filtradas.columns)
+        df_registrados_view = pd.DataFrame(columns=df_view_acoes.columns)
 
-    # Renderiza os gráficos de acordo com a seleção unificada
+    total_registrados = int(
+        df_view_logs["mensagem"].str.contains("REGISTRADO|DOCS OK", case=False, na=False).sum()
+    )
+
+    # --- MÉTRICAS (agora dependem da planilha selecionada) ---
+    col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+    col_m1.metric("Ações Registradas no Período", total_acoes_view)
+    col_m2.metric("Digitadores Ativos", df_view_logs["digitador"].nunique())
+    col_m3.metric("Planilhas com Atividade", df_view_logs["sheet_name"].nunique())
+    col_m4.metric("Registrados", total_registrados)
+
+    # --- GRÁFICOS ---
     if aba_selecionada == "🌐 Consolidado (Todas)":
         c1, c2, c3 = st.columns(3)
         with c1:
             st.markdown("**Atividades por Digitador (Geral)**")
-            st.bar_chart(df_acoes_filtradas["digitador"].value_counts())
+            st.bar_chart(df_view_acoes["digitador"].value_counts())
         with c2:
             st.markdown("**Atividades por Planilha**")
-            st.bar_chart(df_acoes_filtradas["sheet_name"].value_counts())
+            st.bar_chart(df_view_acoes["sheet_name"].value_counts())
         with c3:
-            st.markdown(f"**Registrados por Digitador ({len(df_registrados_filtradas)})**")
-            st.bar_chart(df_registrados_filtradas["digitador"].value_counts())
+            st.markdown(f"**Registrados por Digitador ({len(df_registrados_view)})**")
+            st.bar_chart(df_registrados_view["digitador"].value_counts())
     else:
-        df_sheet_logs = df_acoes_filtradas[df_acoes_filtradas["sheet_name"] == aba_selecionada]
-        df_sheet_registrados = df_registrados_filtradas[df_registrados_filtradas["sheet_name"] == aba_selecionada]
-
         c_s1, c_s2, c_s3 = st.columns(3)
         with c_s1:
             st.markdown("**Atividades por Digitador**")
-            st.bar_chart(df_sheet_logs["digitador"].value_counts())
+            st.bar_chart(df_view_acoes["digitador"].value_counts())
         with c_s2:
             st.markdown("**Ações mais Frequentes**")
-            st.bar_chart(df_sheet_logs["referencia"].value_counts().head(10))
+            st.bar_chart(df_view_acoes["referencia"].value_counts().head(10))
         with c_s3:
-            st.markdown(f"**Registrados por Digitador ({len(df_sheet_registrados)})**")
-            st.bar_chart(df_sheet_registrados["digitador"].value_counts())
+            st.markdown(f"**Registrados por Digitador ({len(df_registrados_view)})**")
+            st.bar_chart(df_registrados_view["digitador"].value_counts())
 else:
     st.info("Nenhuma atividade registrada no período selecionado.")
 
