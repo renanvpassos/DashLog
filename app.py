@@ -713,7 +713,7 @@ if st.session_state["dt_inicio"] <= st.session_state["dt_fim"]:
 # ==========================================
 # PAINEL PRINCIPAL
 # ==========================================
-col_titulo, col_logo = st.columns([0.88, 0.12], vertical_alignment="center")
+col_titulo, col_logo = st.columns([0.82, 0.18], vertical_alignment="center")
 
 with col_titulo:
     st.title("📊 Monitor Operacional em Tempo Real")
@@ -723,6 +723,23 @@ with col_logo:
         st.image("logoMult.png", use_container_width=True)
     except Exception:
         pass
+
+    if "menu_planilhas_aberto" not in st.session_state:
+        st.session_state["menu_planilhas_aberto"] = False
+
+    if st.button("ACESSAR PLANILHA", key="toggle_menu_planilhas", use_container_width=True):
+        st.session_state["menu_planilhas_aberto"] = not st.session_state["menu_planilhas_aberto"]
+
+    if st.session_state["menu_planilhas_aberto"]:
+        if LISTA_PLANILHAS:
+            for nome, sheet_id in LISTA_PLANILHAS.items():
+                st.link_button(
+                    nome,
+                    f"https://docs.google.com/spreadsheets/d/{sheet_id}/edit",
+                    use_container_width=True,
+                )
+        else:
+            st.caption("Nenhuma planilha configurada.")
 
 st.caption(f"Monitorando **{len(LISTA_PLANILHAS)}** planilha(s) configurada(s) — dados lidos da aba **'{NOME_ABA_LOG}'**. *(Atenção: Atualiza automaticamente a cada 1 minuto!)*")
 
