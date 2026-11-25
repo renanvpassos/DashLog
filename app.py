@@ -9,6 +9,7 @@ import unicodedata
 from collections import Counter
 from datetime import datetime, date
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from html import escape
 from zoneinfo import ZoneInfo
 import pandas as pd
 import streamlit as st
@@ -724,22 +725,74 @@ with col_logo:
     except Exception:
         pass
 
-    if "menu_planilhas_aberto" not in st.session_state:
-        st.session_state["menu_planilhas_aberto"] = False
+    if LISTA_PLANILHAS:
+        itens_planilhas = "".join(
+            f'<li><a href="https://docs.google.com/spreadsheets/d/{escape(sheet_id, quote=True)}/edit" '
+            f'target="_blank" rel="noopener noreferrer">{escape(nome)}</a></li>'
+            for nome, sheet_id in LISTA_PLANILHAS.items()
+        )
+    else:
+        itens_planilhas = '<li class="sheet-menu-empty">Nenhuma planilha configurada.</li>'
 
-    if st.button("ACESSAR PLANILHA", key="toggle_menu_planilhas", use_container_width=True):
-        st.session_state["menu_planilhas_aberto"] = not st.session_state["menu_planilhas_aberto"]
-
-    if st.session_state["menu_planilhas_aberto"]:
-        if LISTA_PLANILHAS:
-            for nome, sheet_id in LISTA_PLANILHAS.items():
-                st.link_button(
-                    nome,
-                    f"https://docs.google.com/spreadsheets/d/{sheet_id}/edit",
-                    use_container_width=True,
-                )
-        else:
-            st.caption("Nenhuma planilha configurada.")
+    st.markdown(
+        f"""
+        <style>
+            .sheet-menu {{
+                position: relative;
+                z-index: 1000;
+            }}
+            .sheet-menu > summary {{
+                list-style: none;
+                cursor: pointer;
+                padding: 0.5rem 0.75rem;
+                border-radius: 0.5rem;
+                background: #1565c0;
+                color: #ffffff;
+                font-weight: 700;
+                text-align: center;
+            }}
+            .sheet-menu > summary::-webkit-details-marker {{
+                display: none;
+            }}
+            .sheet-menu-list {{
+                position: absolute;
+                top: calc(100% + 0.25rem);
+                right: 0;
+                z-index: 10000;
+                min-width: 100%;
+                max-width: min(320px, calc(100vw - 2rem));
+                max-height: 320px;
+                overflow-y: auto;
+                margin: 0;
+                padding: 0.25rem 0;
+                list-style: none;
+                background: #ffffff;
+                border: 1px solid #d1d5db;
+                border-radius: 0.5rem;
+                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+            }}
+            .sheet-menu-list a {{
+                display: block;
+                padding: 0.5rem 0.75rem;
+                color: #1f2937;
+                text-decoration: none;
+                white-space: nowrap;
+            }}
+            .sheet-menu-list a:hover {{
+                background: #f1f5f9;
+            }}
+            .sheet-menu-empty {{
+                padding: 0.5rem 0.75rem;
+                color: #1f2937;
+            }}
+        </style>
+        <details class="sheet-menu">
+            <summary>ACESSAR PLANILHA</summary>
+            <ul class="sheet-menu-list">{itens_planilhas}</ul>
+        </details>
+        """,
+        unsafe_allow_html=True,
+    )
 
 st.caption(f"Monitorando **{len(LISTA_PLANILHAS)}** planilha(s) configurada(s) — dados lidos da aba **'{NOME_ABA_LOG}'**. *(Atenção: Atualiza automaticamente a cada 1 minuto!)*")
 
