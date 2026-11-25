@@ -787,7 +787,7 @@ with col_logo:
             }}
         </style>
         <details class="sheet-menu">
-            <summary>ACESSAR PLANILHAS</summary>
+            <summary>ACESSAR FLUXOGRAMA</summary>
             <ul class="sheet-menu-list">{itens_planilhas}</ul>
         </details>
         """,
