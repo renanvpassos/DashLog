@@ -787,7 +787,7 @@ with col_logo:
             }}
         </style>
         <details class="sheet-menu">
-            <summary>ACESSAR PLANILHA</summary>
+            <summary>ACESSAR PLANILHAS</summary>
             <ul class="sheet-menu-list">{itens_planilhas}</ul>
         </details>
         """,
